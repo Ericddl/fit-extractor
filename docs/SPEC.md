@@ -10,10 +10,10 @@
 
 | Champ | Valeur |
 |-------|--------|
-| Phase | Draft v2 |
-| Branch courante | `main` |
-| Dernière session IA | 2026-05-13 |
-| Prochaine action | Implémenter `extractor.py` et valider sur les 3 fichiers de test réels |
+| Phase | Draft v2 + évolution file_manager |
+| Branch courante | `feature/filemanager` |
+| Dernière session IA | 2026-05-14 |
+| Prochaine action | Valider le workflow `import/`→`export/` sur les 3 fichiers de test réels |
 
 ---
 
@@ -47,9 +47,14 @@ L'utilisateur colle le Markdown dans une IA de coaching. Le Markdown doit donc �
 ```
 fit-extractor/
 ├── extractor.py          # Script principal, point d'entrée CLI
+├── file_manager.py       # Résolution des chemins, nommage, déplacement
 ├── requirements.txt      # fitparse uniquement
-├── SPEC.md               # Ce document
+├── docs/SPEC.md          # Ce document
 ├── README.md             # Usage rapide
+├── import/               # Fichiers .fit / .fit.gz à traiter (créé automatiquement)
+│   └── .gitkeep
+├── export/               # .md générés + .fit archivés (créé automatiquement)
+│   └── .gitkeep
 └── examples/
     ├── trail.fit         # Fichier de test Suunto running/trail
     ├── velo.fit          # Fichier de test Garmin vélo
@@ -58,16 +63,20 @@ fit-extractor/
 
 ### Data flow
 ```
-fichier.fit (.gz)
-  → décompression si .gz (gzip stdlib)
+import/fichier.fit (.gz)
+  → résolution du chemin (depuis import/ si nom nu)
+  → décompression en mémoire si .gz (gzip stdlib)
   → parsing FitFile (fitparse + StandardUnitsDataProcessor)
   → extraction générique de TOUS les messages connus
       session / lap / record / hrv / device_info /
       user_profile / zones_target / developer_fields
   → détection du profil matériel (Suunto vs Garmin vs autre)
+  → planification du basename normalisé
+      YYYY-MM-DD_<activité>_<indice>
   → formatage Markdown conditionnel par sections
-      (sections absentes si données non disponibles)
-  → écriture fichier .md
+  → écriture export/<basename>.md
+  → déplacement de la source .fit / .fit.gz vers export/<basename>.<ext>
+      (uniquement après succès de l'écriture .md)
 ```
 
 ---
@@ -76,14 +85,38 @@ fichier.fit (.gz)
 
 ### `extractor.py`
 
-- **Role** : Script CLI unique — parsing générique, transformation, écriture
+- **Role** : Point d'entrée CLI — orchestration parsing / formatage / écriture / archivage
 - **Files** : `extractor.py`
 - **Public interface** :
   ```
-  python extractor.py <input.fit> [--output chemin/sortie.md] [--gps] [--gps-limit N] [--stdout]
+  python extractor.py <input.fit> [--output chemin/sortie.md] [--gps] [--gps-limit N] [--stdout] [--force]
   ```
-- **Dependencies** : `fitparse`, `gzip`, `pathlib`, `argparse`, `datetime`, `math`, `collections`
-- **Side effects** : crée un fichier `.md` sur le disque (ou stdout si `--stdout`)
+- **Dependencies** : `fitparse`, `gzip`, `pathlib`, `argparse`, `math`, `file_manager`
+- **Side effects** :
+  - crée les dossiers `import/` et `export/` s'ils n'existent pas
+  - écrit le `.md` dans `export/` (ou à l'emplacement `--output`, ou stdout)
+  - déplace le `.fit` source vers `export/` après succès (sauf `--stdout`)
+
+### `file_manager.py`
+
+- **Role** : Gérer les dossiers standards et la convention de nommage `YYYY-MM-DD_<activité>_<indice>`
+- **Files** : `file_manager.py`
+- **Public interface** :
+  ```python
+  ensure_workdirs() -> None
+  sanitize_filename_part(text, fallback="activite") -> str
+  resolve_input_path(user_arg: Path) -> Path
+  resolve_activity_date(session: dict) -> date
+  resolve_activity_name(session: dict) -> str
+  next_available_index(directory, date_str, activity) -> int
+  build_activity_basename(date, activity, index) -> str
+  plan_output_paths(session, fallback_source) -> tuple[Path, str]
+  move_processed_fit(source: Path, md_target: Path) -> Path
+  ```
+- **Dependencies** : `pathlib`, `shutil`, `unicodedata`, `re`, `datetime` (stdlib uniquement)
+- **Side effects** :
+  - `ensure_workdirs` : crée `import/` et `export/` si absents
+  - `move_processed_fit` : déplace le fichier source via `shutil.move`
 
 ---
 
@@ -159,6 +192,16 @@ Lire le champ `manufacturer` du premier message `device_info` :
 - **Temps de récupération** : `recovery_time` (s) → `Xh YYmin`
 - **Zones FC** : `time_in_hr_zone` est un tuple `(z1, z2, z3, z4, z5)` en secondes → formater chaque zone
 
+### Workflow import/ → export/
+
+- **Résolution input** : un chemin absolu/relatif est utilisé tel quel ; un nom nu introuvable mais présent dans `import/` est résolu vers `import/<nom>`.
+- **Date de l'activité** : priorité `session.start_time` → `session.timestamp` → `session.date` → `date.today()`. Toujours formaté `YYYY-MM-DD`.
+- **Nom d'activité** : `sport` + `sub_sport` (si distinct, non générique) après sanitisation (NFD-strip accents, lowercase, `[a-z0-9_]` only). Fallback : nom du fichier source sanitisé, puis `activite`.
+- **Indice** : scan de `export/` pour les fichiers `^{date}_{activity}_(\d{3})\.(md|fit|fit\.gz)$` ; on prend `max+1`, formaté sur 3 chiffres. Auto-incrément, pas de `--force` nécessaire.
+- **Déplacement** : `shutil.move` de la source `.fit`/`.fit.gz` vers `export/<basename>.<ext>`. L'extension `.fit.gz` composée est détectée via `name.lower().endswith(".fit.gz")` (pas via `Path.suffix`). Garde-fou anti-race : suffixe `_dupN` si la destination existe déjà au moment du move.
+- **Échec d'écriture .md** : exception levée avant l'étape de déplacement → la source reste intacte dans `import/`.
+- **Échec de move** : warning stderr, le `.md` reste écrit dans `export/`, la source reste à sa place.
+
 ---
 
 ## 5. Contracts & Interfaces
@@ -168,15 +211,22 @@ Lire le champ `manufacturer` du premier message `device_info` :
 python extractor.py <input>  [options]
 
 Arguments :
-  input                 Chemin vers le fichier .fit ou .fit.gz
+  input                 Chemin vers le fichier .fit ou .fit.gz.
+                        Un nom nu est résolu depuis import/ s'il y existe.
 
 Options :
-  --output PATH         Chemin du fichier .md de sortie
-                        (défaut : même dossier que l'input, même nom, extension .md)
-  --stdout              Afficher le Markdown dans le terminal (pour pipe ou copier-coller)
+  --output PATH         Chemin du .md de sortie. Court-circuite le nommage auto.
+                        Le .fit source est alors déplacé à côté de --output
+                        avec le même basename (mais en .fit / .fit.gz).
+                        Sans --output, le .md va dans
+                        export/YYYY-MM-DD_<activité>_<indice>.md
+                        et le .fit source est déplacé dans export/ avec le même basename.
+  --stdout              Afficher le Markdown dans le terminal.
+                        Aucun fichier écrit, le .fit n'est pas déplacé.
   --gps                 Inclure une section avec les points GPS échantillonnés
   --gps-limit N         Nombre max de points GPS à inclure (défaut : 30)
-  --force               Écraser le fichier de sortie s'il existe déjà
+  --force               Avec --output, autorise l'écrasement d'un .md existant.
+                        Sans --output, inutile : l'indice s'auto-incrémente.
 ```
 
 ### Structure du Markdown produit
@@ -281,13 +331,32 @@ Chaque section est **conditionnelle** — elle n'apparaît que si les données s
 
 ## 6. Configuration
 
+### Dossiers standards
+
+| Dossier | Rôle |
+|---------|------|
+| `import/` | Fichiers `.fit` / `.fit.gz` à traiter — créé automatiquement |
+| `export/` | `.md` générés + `.fit` archivés sous `YYYY-MM-DD_<activité>_<indice>` — créé automatiquement |
+
+Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
+
+```
+/import/*
+/export/*
+!/import/.gitkeep
+!/export/.gitkeep
+```
+
+### Arguments CLI
+
 | Argument | Usage | Défaut |
 |----------|-------|--------|
-| `--output` | Chemin de sortie du `.md` | `<input_stem>.md` |
-| `--stdout` | Afficher dans le terminal | désactivé |
+| `input` | Chemin du `.fit` ou nom nu cherché dans `import/` | requis |
+| `--output` | Chemin de sortie du `.md` ; `.fit` déplacé à côté avec même basename | `export/<basename>.md` auto |
+| `--stdout` | Afficher dans le terminal, pas d'écriture, pas de déplacement | désactivé |
 | `--gps` | Inclure les points GPS échantillonnés | désactivé |
 | `--gps-limit` | Nb max de points GPS | 30 |
-| `--force` | Écraser le fichier de sortie existant | désactivé |
+| `--force` | Avec `--output`, autorise l'écrasement du `.md` cible | désactivé |
 
 ---
 
@@ -304,6 +373,11 @@ Chaque section est **conditionnelle** — elle n'apparaît que si les données s
 | `--stdout` disponible | Permet copier-coller direct sans fichier intermédiaire | Toujours fichier |
 | Markdown pur (tableaux GFM) | Rendu parfait dans ChatGPT, Claude, Obsidian | JSON (moins lisible par humain) |
 | `StandardUnitsDataProcessor` activé | Unités cohérentes, lisibles par une IA | Unités brutes (source d'erreurs) |
+| Dossiers standards `import/` et `export/` | Sépare entrants/sortants, facilite l'archivage | Demander un chemin complet à chaque appel |
+| Basename normalisé `YYYY-MM-DD_<activité>_<indice>` partagé `.md`/`.fit` | Lisible, triable, associe immédiatement source et résultat | Conserver le nom source ou un timestamp brut |
+| Auto-incrément de l'indice depuis `export/` | Évite les collisions sans état persistant | Stocker un compteur local |
+| Module `file_manager.py` dédié | Sépare les responsabilités I/O du parsing/formatage | Tout garder dans `extractor.py` |
+| Pas de déplacement en mode `--stdout` | Évite un effet de bord sur un mode pensé pour copier-coller | Archiver systématiquement |
 
 ---
 
@@ -323,9 +397,15 @@ Chaque section est **conditionnelle** — elle n'apparaît que si les données s
 - **Toujours utiliser `StandardUnitsDataProcessor()`** — ne jamais retirer
 - **Ne jamais inclure les champs `unknown_XXX`** dans le Markdown
 - **Ne jamais inclure les intervalles HRV bruts** — uniquement RMSSD et SDNN calculés
-- **Ne jamais écraser silencieusement un fichier `.md` existant** — erreur ou `--force` requis
+- **Ne jamais écraser silencieusement un fichier `.md` existant** — auto-incrément par défaut, ou `--force` avec `--output`
 - **Les champs `None` ne doivent jamais provoquer une exception** — fallback `"-"` systématique
 - **Le Markdown doit rester lisible sans rendu** — tableaux GFM simples, pas de HTML
+- **Un `.fit` traité avec succès ne reste pas dans `import/`** — sauf `--stdout`
+- **Un `.fit` n'est jamais déplacé si la génération `.md` échoue** — la source reste intacte
+- **Le `.fit` archivé et le `.md` généré partagent toujours le même basename**
+- **Tout export automatique va dans `export/`** ; tout import automatique vient de `import/`
+- **Les dossiers `import/` et `export/` sont créés automatiquement** si absents
+- **Le nommage produit toujours des noms compatibles** avec la plupart des systèmes de fichiers (ASCII, `[a-z0-9_]`)
 
 ---
 
@@ -334,7 +414,9 @@ Chaque section est **conditionnelle** — elle n'apparaît que si les données s
 - Pas de visualisation graphique
 - Pas d'export CSV/JSON/HTML — uniquement Markdown
 - Pas d'envoi automatique à une IA (pas d'appel API ChatGPT/Claude depuis le script)
-- Pas de traitement batch multi-fichiers (une seule activité par appel)
+- Pas de traitement batch multi-fichiers (une seule activité par appel) — explicitement hors périmètre de l'évolution `file_manager`
+- Pas de génération d'un index global des activités présentes dans `export/`
+- Pas de suppression automatique des fichiers présents dans `export/`
 - Pas d'interface GUI
 - Pas de frontmatter YAML Obsidian/Dataview (à envisager en v2)
 
@@ -355,6 +437,7 @@ Chaque section est **conditionnelle** — elle n'apparaît que si les données s
 |------|------------|
 | 2026-05-13 | Initialisation du projet et de la spec v1 |
 | 2026-05-13 | v2 : analyse réelle de 3 fichiers FIT (Suunto Spartan Ultra + Garmin Edge). Refonte cible (coaching IA), extraction générique, HRV calculé, developer fields Suunto documentés, sections conditionnelles, suppression unknown_XXX |
+| 2026-05-14 | Workflow `import/` → `export/` : résolution input depuis `import/`, basename normalisé `YYYY-MM-DD_<activité>_<indice>` partagé `.md`/`.fit`, déplacement du `.fit` source après succès, auto-incrément de l'indice, module `file_manager.py` dédié |
 
 ---
 
@@ -386,6 +469,8 @@ Ce projet a été développé et testé sur deux matériels réels :
 - Ne pas modifier l'interface CLI sans mettre à jour la section 5
 - Les champs `None` doivent toujours être gérés
 - Toute nouvelle section Markdown doit être conditionnelle
+- Toute logique de chemin / nommage / déplacement appartient à `file_manager.py`, pas à `extractor.py`
+- Respecter le workflow `import/` → `export/` : ne pas réintroduire d'écriture par défaut à côté du `.fit` source
 
 ### Before coding
 - Lire ce document en entier
@@ -404,3 +489,6 @@ Ce projet a été développé et testé sur deux matériels réels :
 - Inclure les intervalles HRV bruts dans le Markdown
 - Réécrire entièrement le script sans raison documentée
 - Coder en dur une liste de champs à extraire (utiliser l'extraction générique)
+- Écrire le `.md` par défaut ailleurs que dans `export/` (sauf `--output` explicite ou `--stdout`)
+- Laisser un `.fit` traité avec succès dans `import/` (sauf `--stdout`)
+- Détecter `.fit.gz` via `Path.suffix` (qui ne voit que `.gz`) — utiliser `name.lower().endswith(".fit.gz")`
