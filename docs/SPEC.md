@@ -10,10 +10,10 @@
 
 | Champ | Valeur |
 |-------|--------|
-| Phase | Draft v2 + évolution file_manager |
-| Branch courante | `feature/filemanager` |
+| Phase | Draft v2 + évolutions file_manager & gpx |
+| Branch courante | `feature/gpx` |
 | Dernière session IA | 2026-05-14 |
-| Prochaine action | Valider le workflow `import/`→`export/` sur les 3 fichiers de test réels |
+| Prochaine action | Valider la génération GPX sur les 3 fichiers de test réels (outdoor + indoor) |
 
 ---
 
@@ -26,11 +26,14 @@
 
 ### High-level behavior
 - **Inputs** : un fichier `.fit` (ou `.fit.gz`) — Suunto Spartan Ultra (running/trail) ou GPS Garmin Edge (vélo)
-- **Outputs** : un fichier `.md` lisible par un humain et dense en informations pour une IA de coaching
+- **Outputs** :
+  - un fichier `.md` lisible par un humain et dense en informations pour une IA de coaching ;
+  - un fichier `.gpx` 1.1 contenant la trace GPS complète (généré automatiquement si points GPS exploitables).
 - **Core use case principal** : copier-coller le `.md` dans ChatGPT ou Claude pour obtenir une analyse de séance, des conseils d'entraînement, un suivi de charge
 - **Core use cases secondaires** :
   - Extraction CLI simple : `python extractor.py mon_activite.fit`
   - Archivage personnel d'activités (vault Obsidian)
+  - Visualisation cartographique de la trace via le `.gpx` dans un outil tiers
 
 ### Cible utilisateur
 L'utilisateur colle le Markdown dans une IA de coaching. Le Markdown doit donc être :
@@ -48,6 +51,7 @@ L'utilisateur colle le Markdown dans une IA de coaching. Le Markdown doit donc �
 fit-extractor/
 ├── extractor.py          # Script principal, point d'entrée CLI
 ├── file_manager.py       # Résolution des chemins, nommage, déplacement
+├── gpx_exporter.py       # Extraction des points GPS et génération du GPX 1.1
 ├── requirements.txt      # fitparse uniquement
 ├── docs/SPEC.md          # Ce document
 ├── README.md             # Usage rapide
@@ -75,6 +79,8 @@ import/fichier.fit (.gz)
       YYYY-MM-DD_<activité>_<indice>
   → formatage Markdown conditionnel par sections
   → écriture export/<basename>.md
+  → extraction des points GPS exploitables depuis les records
+  → si points GPS présents : écriture export/<basename>.gpx (GPX 1.1)
   → déplacement de la source .fit / .fit.gz vers export/<basename>.<ext>
       (uniquement après succès de l'écriture .md)
 ```
@@ -96,6 +102,21 @@ import/fichier.fit (.gz)
   - crée les dossiers `import/` et `export/` s'ils n'existent pas
   - écrit le `.md` dans `export/` (ou à l'emplacement `--output`, ou stdout)
   - déplace le `.fit` source vers `export/` après succès (sauf `--stdout`)
+
+### `gpx_exporter.py`
+
+- **Role** : Extraire les points GPS exploitables et produire un fichier GPX 1.1 sans dépendance externe
+- **Files** : `gpx_exporter.py`
+- **Public interface** :
+  ```python
+  extract_gps_points(records: list[dict]) -> list[dict]
+  has_gps_points(gps_points: list[dict]) -> bool
+  format_gpx_time(dt: datetime) -> str
+  build_gpx(gps_points, track_name, creator="fit-extractor") -> str
+  write_gpx_file(gpx_content: str, output_path: Path, force: bool = False) -> None
+  ```
+- **Dependencies** : `xml.etree.ElementTree`, `datetime`, `pathlib` (stdlib uniquement)
+- **Side effects** : `write_gpx_file` écrit le `.gpx` dans `export/` (ou à côté de `--output`)
 
 ### `file_manager.py`
 
@@ -202,6 +223,16 @@ Lire le champ `manufacturer` du premier message `device_info` :
 - **Échec d'écriture .md** : exception levée avant l'étape de déplacement → la source reste intacte dans `import/`.
 - **Échec de move** : warning stderr, le `.md` reste écrit dans `export/`, la source reste à sa place.
 
+### Génération du GPX
+
+- **Filtrage des points** : un record est conservé si `position_lat` et `position_long` sont présents, convertibles en float, et dans les plages valides (`-90 ≤ lat ≤ 90`, `-180 ≤ lon ≤ 180`). Avec `StandardUnitsDataProcessor`, ces valeurs sont déjà en degrés — pas de conversion semicircles manuelle.
+- **Format** : GPX 1.1, namespace `http://www.topografix.com/GPX/1/1`, structure `<gpx>/<trk>/<trkseg>/<trkpt>`. La balise `<name>` du `<trk>` contient le basename complet (`YYYY-MM-DD_<activité>_<indice>`).
+- **Champs par point** : `lat`/`lon` comme attributs, `<ele>` si altitude présente, `<time>` si timestamp présent (ISO 8601 UTC, suffixe `Z`).
+- **Champs non exportés en V1** : fréquence cardiaque, vitesse, cadence, puissance, température, developer fields. Ces données restent dans le Markdown.
+- **Pas de `--gps-limit`** sur le GPX : trace complète. `--gps`/`--gps-limit` n'affectent que la section GPS du Markdown.
+- **Pas de fichier vide** : si aucun point exploitable, message stderr "Aucun point GPS exploitable trouvé : GPX non généré." et le traitement reste considéré comme réussi.
+- **Collision** : en mode auto, la regex de `next_available_index` inclut `gpx` donc l'indice évite les collisions. En mode `--output`, `--force` autorise l'écrasement du `.gpx` (cohérent avec le `.md`).
+
 ---
 
 ## 5. Contracts & Interfaces
@@ -227,7 +258,16 @@ Options :
   --gps-limit N         Nombre max de points GPS à inclure (défaut : 30)
   --force               Avec --output, autorise l'écrasement d'un .md existant.
                         Sans --output, inutile : l'indice s'auto-incrémente.
+                        Couvre également l'écrasement du .gpx en mode --output.
 ```
+
+### Comportement par défaut du GPX
+
+Un fichier `.gpx` est généré automatiquement à côté du `.md` (mode auto ou `--output`) dès que le FIT contient des points GPS exploitables. Aucune option `--gpx` / `--no-gpx` en V1.
+
+- `--gps` et `--gps-limit` affectent uniquement la section GPS échantillonnée du Markdown.
+- Le GPX contient toujours la trace complète, indépendamment de `--gps-limit`.
+- `--stdout` désactive toute écriture, y compris du `.gpx`.
 
 ### Structure du Markdown produit
 
@@ -336,7 +376,7 @@ Chaque section est **conditionnelle** — elle n'apparaît que si les données s
 | Dossier | Rôle |
 |---------|------|
 | `import/` | Fichiers `.fit` / `.fit.gz` à traiter — créé automatiquement |
-| `export/` | `.md` générés + `.fit` archivés sous `YYYY-MM-DD_<activité>_<indice>` — créé automatiquement |
+| `export/` | `.md` + `.gpx` générés + `.fit` archivés sous `YYYY-MM-DD_<activité>_<indice>` — créé automatiquement |
 
 Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 
@@ -378,6 +418,13 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | Auto-incrément de l'indice depuis `export/` | Évite les collisions sans état persistant | Stocker un compteur local |
 | Module `file_manager.py` dédié | Sépare les responsabilités I/O du parsing/formatage | Tout garder dans `extractor.py` |
 | Pas de déplacement en mode `--stdout` | Évite un effet de bord sur un mode pensé pour copier-coller | Archiver systématiquement |
+| Génération GPX automatique si points GPS présents | Répond au besoin principal sans option supplémentaire | Obliger un `--gpx` explicite |
+| GPX 1.1 `<trk>`/`<trkseg>`/`<trkpt>` | Format standard, lu par tous les outils cartographiques | Format propriétaire ou JSON |
+| Pas d'extensions FC/vitesse/cadence en V1 | Reste simple, standard, sans dépendance | Extensions Garmin/TrackPointExtension |
+| Trace GPX complète (pas de `--gps-limit`) | La trace n'a de sens qu'entière | Échantillonner comme le Markdown |
+| `xml.etree.ElementTree` (stdlib) | Pas de dépendance externe | Ajouter `gpxpy` |
+| Pas de GPX vide | Évite les artefacts trompeurs | Créer un fichier sans trace |
+| Module `gpx_exporter.py` dédié | Sépare la génération XML du parsing FIT | Tout garder dans `extractor.py` |
 
 ---
 
@@ -406,13 +453,26 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - **Tout export automatique va dans `export/`** ; tout import automatique vient de `import/`
 - **Les dossiers `import/` et `export/` sont créés automatiquement** si absents
 - **Le nommage produit toujours des noms compatibles** avec la plupart des systèmes de fichiers (ASCII, `[a-z0-9_]`)
+- **Le `.gpx` partage toujours le même basename** que le `.md` et le `.fit`
+- **Le `.gpx` est toujours écrit dans `export/`** (ou à côté de `--output`)
+- **Aucun `.gpx` vide n'est généré** — si aucun point GPS exploitable, pas de fichier
+- **Le GPX ne contient que des points lat/lon valides** (numériques, dans les plages)
+- **`--gps-limit` ne limite jamais le GPX** — uniquement la section GPS du Markdown
+- **L'absence de GPS n'empêche pas la génération du Markdown** — message stderr explicite, traitement réussi
+- **Aucune dépendance externe pour le GPX** — stdlib `xml.etree.ElementTree` uniquement
+- **Les extensions propriétaires GPX (FC, vitesse, cadence)** sont hors périmètre V1
 
 ---
 
 ## 10. Out of Scope
 
-- Pas de visualisation graphique
-- Pas d'export CSV/JSON/HTML — uniquement Markdown
+- Pas de visualisation graphique (carte rendue, image de parcours)
+- Pas d'export CSV/JSON/HTML — sorties limitées à Markdown et GPX
+- Pas d'extensions GPX (FC, cadence, vitesse, puissance, TrackPointExtension Garmin/Strava/Suunto)
+- Pas de simplification ou compression de trace GPX
+- Pas de découpage du GPX en plusieurs segments en cas de pause ou perte GPS
+- Pas de correction ni d'interpolation des points GPS manquants
+- Pas d'import du GPX dans Strava/Garmin/Suunto/autre plateforme
 - Pas d'envoi automatique à une IA (pas d'appel API ChatGPT/Claude depuis le script)
 - Pas de traitement batch multi-fichiers (une seule activité par appel) — explicitement hors périmètre de l'évolution `file_manager`
 - Pas de génération d'un index global des activités présentes dans `export/`
@@ -438,6 +498,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | 2026-05-13 | Initialisation du projet et de la spec v1 |
 | 2026-05-13 | v2 : analyse réelle de 3 fichiers FIT (Suunto Spartan Ultra + Garmin Edge). Refonte cible (coaching IA), extraction générique, HRV calculé, developer fields Suunto documentés, sections conditionnelles, suppression unknown_XXX |
 | 2026-05-14 | Workflow `import/` → `export/` : résolution input depuis `import/`, basename normalisé `YYYY-MM-DD_<activité>_<indice>` partagé `.md`/`.fit`, déplacement du `.fit` source après succès, auto-incrément de l'indice, module `file_manager.py` dédié |
+| 2026-05-14 | Génération GPX 1.1 automatique : module `gpx_exporter.py`, `<trk>`/`<trkseg>`/`<trkpt>` avec `<ele>` et `<time>` ISO 8601 UTC, basename partagé avec `.md`/`.fit`, trace complète indépendante de `--gps-limit`, extension de `next_available_index` pour scanner aussi les `.gpx` |
 
 ---
 
@@ -470,7 +531,9 @@ Ce projet a été développé et testé sur deux matériels réels :
 - Les champs `None` doivent toujours être gérés
 - Toute nouvelle section Markdown doit être conditionnelle
 - Toute logique de chemin / nommage / déplacement appartient à `file_manager.py`, pas à `extractor.py`
+- Toute logique d'extraction GPS / génération XML GPX appartient à `gpx_exporter.py`, pas à `extractor.py`
 - Respecter le workflow `import/` → `export/` : ne pas réintroduire d'écriture par défaut à côté du `.fit` source
+- Le GPX doit rester en stdlib (`xml.etree.ElementTree`) — pas d'ajout de dépendance `gpxpy` ou autre
 
 ### Before coding
 - Lire ce document en entier
@@ -492,3 +555,7 @@ Ce projet a été développé et testé sur deux matériels réels :
 - Écrire le `.md` par défaut ailleurs que dans `export/` (sauf `--output` explicite ou `--stdout`)
 - Laisser un `.fit` traité avec succès dans `import/` (sauf `--stdout`)
 - Détecter `.fit.gz` via `Path.suffix` (qui ne voit que `.gz`) — utiliser `name.lower().endswith(".fit.gz")`
+- Inclure FC, cadence, vitesse ou puissance dans le GPX V1
+- Générer un fichier GPX vide si aucun point GPS exploitable n'existe
+- Appliquer `--gps-limit` au fichier GPX
+- Ajouter une dépendance externe pour le GPX (utiliser `xml.etree.ElementTree` stdlib)

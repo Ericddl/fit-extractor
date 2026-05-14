@@ -18,6 +18,12 @@ from file_manager import (
     IMPORT_DIR,
     EXPORT_DIR,
 )
+from gpx_exporter import (
+    build_gpx,
+    extract_gps_points,
+    has_gps_points,
+    write_gpx_file,
+)
 
 
 def parse_fit(path: Path) -> dict:
@@ -520,6 +526,20 @@ def main():
     md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text(markdown, encoding="utf-8")
     print(f"Markdown généré : {md_path}", file=sys.stderr)
+
+    gps_points = extract_gps_points(data["records"])
+    if has_gps_points(gps_points):
+        gpx_path = md_path.with_suffix(".gpx")
+        gpx_content = build_gpx(gps_points, md_path.stem)
+        try:
+            write_gpx_file(gpx_content, gpx_path, force=args.force)
+        except FileExistsError:
+            print(f"Erreur : le fichier GPX existe déjà : {gpx_path}", file=sys.stderr)
+            print("Utilisez --force pour l'écraser.", file=sys.stderr)
+            sys.exit(1)
+        print(f"GPX généré : {gpx_path} ({len(gps_points)} points)", file=sys.stderr)
+    else:
+        print("Aucun point GPS exploitable trouvé : GPX non généré.", file=sys.stderr)
 
     try:
         final_fit = move_processed_fit(input_path, md_path)
