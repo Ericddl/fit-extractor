@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# Données d'entraînement perso (fichiers .fit + exports)
+import/
+
+# Éditeur / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
