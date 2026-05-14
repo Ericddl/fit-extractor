@@ -21,7 +21,7 @@ EXPORT_DIR = PROJECT_ROOT / "export"
 
 _INDEX_DIGITS = 3
 _BASENAME_RE = re.compile(
-    r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<activity>.+)_(?P<index>\d{3})\.(?:md|fit|fit\.gz)$",
+    r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<activity>.+)_(?P<index>\d{3})\.(?:md|fit|fit\.gz|gpx)$",
     re.IGNORECASE,
 )
 
