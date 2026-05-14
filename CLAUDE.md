@@ -6,31 +6,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `fit-extractor` is a Python CLI that converts `.fit` files (Suunto Spartan Ultra, Garmin Edge) into dense Markdown optimized for copy-pasting into AI coaching tools (ChatGPT, Claude). Output targets a French-speaking athlete archiving workouts in Obsidian.
 
-## CLI Usage (planned)
+## CLI Usage
 
 ```bash
 python extractor.py <input.fit> [--output path/output.md] [--gps] [--gps-limit N] [--stdout] [--force]
 ```
 
+A bare filename is resolved from `import/`. By default the `.md` lands in `export/` under `YYYY-MM-DD_<sport>_<index>.md`, and the source `.fit`/`.fit.gz` is moved next to it with the same basename after success.
+
 Dependencies: `fitparse` only (`pip install fitparse`). Python 3.10+.
 
 ## Architecture
 
-Single-file implementation (`extractor.py`) with this data flow:
+Two modules: `extractor.py` (parsing + formatting + CLI orchestration) and `file_manager.py` (paths, naming, archival).
+
+Data flow:
 
 ```
-.fit / .fit.gz → decompress in memory → fitparse + StandardUnitsDataProcessor
-→ extract all message types (session, lap, record, hrv, device_info, user_profile, zones_target)
-→ detect hardware (Suunto vs Garmin via manufacturer field)
-→ render conditional Markdown sections → write file or stdout
+import/file.fit(.gz) → resolve_input_path → decompress in memory →
+fitparse + StandardUnitsDataProcessor → extract all message types →
+detect hardware (Suunto vs Garmin) → plan_output_paths (build basename, find next index) →
+render conditional Markdown → write export/<basename>.md →
+move source .fit to export/<basename>.fit(.gz)
 ```
 
-Core functions:
+Core functions in `extractor.py`:
 - `parse_fit()` — generic extraction iterating all fields (never hardcode field lists)
 - `detect_device()` — reads `device_info.manufacturer` to activate device-specific sections
 - `compute_hrv()` — calculates RMSSD and SDNN from raw RR intervals
 - `format_markdown()` — assembles output with conditional sections
 - `main()` — argparse CLI orchestration
+
+Core functions in `file_manager.py`:
+- `ensure_workdirs()` — creates `import/` and `export/`
+- `resolve_input_path()` — resolves bare filenames against `import/`
+- `plan_output_paths()` — builds `export/<YYYY-MM-DD>_<activity>_<index>.md` with auto-increment
+- `move_processed_fit()` — moves source `.fit`/`.fit.gz` next to the `.md`, preserves `.fit.gz` compound suffix
 
 ## Invariants (never break these)
 
@@ -39,9 +50,13 @@ Core functions:
 - **Skip `unknown_XXX` fields** — proprietary undocumented fields, noise for AI coaching
 - **HRV: output RMSSD and SDNN only** — raw RR intervals can exceed 10k points, overflowing AI context
 - **`None` → `"-"`** — missing data is extremely common across hardware; always fallback gracefully
-- **Never write `.fit` to disk** — decompress `.fit.gz` in memory only
-- **Refuse to overwrite** without `--force` flag
+- **Never write a decompressed `.fit` to disk** — `.fit.gz` is decompressed in memory only (the archive move preserves `.fit.gz`)
+- **Refuse to overwrite `.md` via `--output`** without `--force` flag. In auto mode, the index auto-increments so no `--force` needed.
 - **All labels in French** — section titles and metric names
+- **All file-path / naming / archival logic lives in `file_manager.py`** — keep `extractor.py` focused on parsing + formatting + orchestration
+- **Default I/O is `import/` → `export/`** — never write `.md` next to the source `.fit` by default
+- **`.fit.gz` detection** uses `name.lower().endswith(".fit.gz")`, not `Path.suffix` (which only sees `.gz`)
+- **Source `.fit` move only after successful `.md` write** — never leave the source half-processed
 
 ## Hardware-Specific Sections
 

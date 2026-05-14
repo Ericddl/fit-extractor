@@ -10,6 +10,15 @@ from pathlib import Path
 
 from fitparse import FitFile, StandardUnitsDataProcessor
 
+from file_manager import (
+    ensure_workdirs,
+    move_processed_fit,
+    plan_output_paths,
+    resolve_input_path,
+    IMPORT_DIR,
+    EXPORT_DIR,
+)
+
 
 def parse_fit(path: Path) -> dict:
     raw = path.read_bytes()
@@ -455,20 +464,35 @@ def main():
     parser = argparse.ArgumentParser(
         description="Convertir un fichier .fit en Markdown pour le coaching IA."
     )
-    parser.add_argument("input", type=Path, help="Fichier .fit ou .fit.gz")
-    parser.add_argument("--output", type=Path, help="Chemin du fichier .md de sortie")
+    parser.add_argument(
+        "input", type=Path,
+        help="Fichier .fit ou .fit.gz (nom seul = recherché dans import/)"
+    )
+    parser.add_argument(
+        "--output", type=Path,
+        help="Chemin du .md de sortie (sinon export/YYYY-MM-DD_<activité>_<indice>.md)"
+    )
     parser.add_argument("--stdout", action="store_true", help="Afficher dans le terminal")
     parser.add_argument("--gps", action="store_true", help="Inclure les points GPS échantillonnés")
     parser.add_argument(
         "--gps-limit", type=int, default=30, metavar="N",
         help="Nombre max de points GPS (défaut : 30)"
     )
-    parser.add_argument("--force", action="store_true", help="Écraser le fichier de sortie existant")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Avec --output, autorise l'écrasement du .md existant"
+    )
     args = parser.parse_args()
 
-    input_path: Path = args.input
+    ensure_workdirs()
+
+    input_path = resolve_input_path(args.input)
     if not input_path.exists():
-        print(f"Erreur : fichier introuvable : {input_path}", file=sys.stderr)
+        print(
+            f"Erreur : fichier introuvable : {args.input} "
+            f"(cherché également dans {IMPORT_DIR}/)",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:
@@ -485,19 +509,29 @@ def main():
         return
 
     if args.output:
-        output_path = args.output
-    elif input_path.suffix.lower() == ".gz":
-        output_path = input_path.with_suffix("").with_suffix(".md")
+        md_path = args.output
+        if md_path.exists() and not args.force:
+            print(f"Erreur : le fichier de sortie existe déjà : {md_path}", file=sys.stderr)
+            print("Utilisez --force pour l'écraser.", file=sys.stderr)
+            sys.exit(1)
     else:
-        output_path = input_path.with_suffix(".md")
+        md_path, _basename = plan_output_paths(data["session"], input_path)
 
-    if output_path.exists() and not args.force:
-        print(f"Erreur : le fichier de sortie existe déjà : {output_path}", file=sys.stderr)
-        print("Utilisez --force pour l'écraser.", file=sys.stderr)
-        sys.exit(1)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text(markdown, encoding="utf-8")
+    print(f"Markdown généré : {md_path}", file=sys.stderr)
 
-    output_path.write_text(markdown, encoding="utf-8")
-    print(f"Markdown généré : {output_path}", file=sys.stderr)
+    try:
+        final_fit = move_processed_fit(input_path, md_path)
+    except OSError as e:
+        print(
+            f"Attention : impossible de déplacer le fichier source ({e}). "
+            f"Le .md a bien été écrit, le .fit reste à {input_path}.",
+            file=sys.stderr,
+        )
+        return
+
+    print(f"Archive FIT : {final_fit}", file=sys.stderr)
 
 
 if __name__ == "__main__":

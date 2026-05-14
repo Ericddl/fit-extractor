@@ -10,41 +10,62 @@ pip install -r requirements.txt
 
 Python 3.10+ requis. Dépendance unique : `fitparse`.
 
+## Workflow
+
+Le projet s'articule autour de deux dossiers à la racine :
+
+```
+fit-extractor/
+├── import/     ← déposer ici les .fit / .fit.gz à traiter
+└── export/     ← reçoit le .md généré + le .fit archivé renommé
+```
+
+Les deux dossiers sont créés automatiquement au premier lancement.
+
+Après traitement d'un fichier `.fit` :
+
+1. le `.md` est généré dans `export/`,
+2. le `.fit` source est déplacé dans `export/`,
+3. les deux fichiers partagent le même basename `YYYY-MM-DD_<activité>_<indice>` (ex. `2026-05-14_trail_001.md` + `2026-05-14_trail_001.fit`).
+
 ## Utilisation
 
 ```bash
 python3 extractor.py <fichier.fit>
 ```
 
-Génère `<fichier>.md` dans le même dossier que l'input.
+Un nom seul est résolu depuis `import/` : `python3 extractor.py Trail_le_matin.fit` cherche `import/Trail_le_matin.fit`.
 
 ### Options
 
 | Option | Effet |
 |--------|-------|
-| `--output PATH` | Chemin du `.md` de sortie (défaut : à côté du `.fit`) |
-| `--stdout` | Affiche le Markdown dans le terminal au lieu d'écrire un fichier |
+| `--output PATH` | Chemin du `.md` de sortie (court-circuite le nommage auto ; le `.fit` est déplacé à côté avec le même basename) |
+| `--stdout` | Affiche le Markdown dans le terminal ; **aucun fichier écrit, le `.fit` n'est pas déplacé** |
 | `--gps` | Ajoute une section avec les points GPS échantillonnés |
 | `--gps-limit N` | Nombre max de points GPS à inclure (défaut : 30) |
-| `--force` | Écrase le fichier `.md` existant |
+| `--force` | Avec `--output`, autorise l'écrasement du `.md` cible |
+
+En mode auto (sans `--output`), l'indice s'incrémente automatiquement si un fichier existe déjà avec la même date et le même type d'activité : pas besoin de `--force`.
 
 ### Exemples
 
 ```bash
-# Conversion simple
-python3 extractor.py import/Trail_le_matin.fit
+# Conversion simple (lit import/Trail_le_matin.fit, écrit dans export/)
+python3 extractor.py Trail_le_matin.fit
 
-# Copier-coller direct dans ChatGPT
-python3 extractor.py import/Trail_le_matin.fit --stdout | pbcopy
+# Copier-coller direct dans ChatGPT (rien n'est écrit, .fit reste dans import/)
+python3 extractor.py Trail_le_matin.fit --stdout | pbcopy
 
 # Avec points GPS (jusqu'à 50)
-python3 extractor.py import/Trail_le_matin.fit --gps --gps-limit 50
+python3 extractor.py Trail_le_matin.fit --gps --gps-limit 50
 
-# Chemin de sortie personnalisé, écrasement autorisé
-python3 extractor.py import/Trail_le_matin.fit --output activites/trail.md --force
+# Chemin de sortie personnalisé : le .md va à l'emplacement demandé,
+# et le .fit est déplacé à côté avec le même basename
+python3 extractor.py Trail_le_matin.fit --output activites/trail.md --force
 ```
 
-Les fichiers `.fit.gz` sont décompressés à la volée — pas besoin de les extraire au préalable.
+Les fichiers `.fit.gz` sont décompressés en mémoire (jamais sur disque) et conservent leur extension `.fit.gz` lors de l'archivage.
 
 ## Sections générées
 

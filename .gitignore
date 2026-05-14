@@ -7,7 +7,10 @@ venv/
 *.egg-info/
 
 # Données d'entraînement perso (fichiers .fit + exports)
-import/
+/import/*
+/export/*
+!/import/.gitkeep
+!/export/.gitkeep
 
 # Éditeur / OS
 .DS_Store
