@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-`fit-extractor` is a Python CLI that converts `.fit` files (Suunto Spartan Ultra, Garmin Edge) into dense Markdown optimized for copy-pasting into AI coaching tools (ChatGPT, Claude). Output targets a French-speaking athlete archiving workouts in Obsidian.
+`fit-extractor` is a Python CLI that converts `.fit` files (Suunto Spartan Ultra, Garmin Edge) into dense Markdown optimized for copy-pasting into AI coaching tools (ChatGPT, Claude). Output targets a French-speaking athlete archiving workouts and pushing this workouts to a AI (chatGPT or Claude) in order to prepare sports events.
 
 ## CLI Usage
 

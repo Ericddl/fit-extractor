@@ -10,10 +10,10 @@
 
 | Champ | Valeur |
 |-------|--------|
-| Phase | Draft v2 + évolutions file_manager & gpx |
-| Branch courante | `feature/gpx` |
-| Dernière session IA | 2026-05-14 |
-| Prochaine action | Valider la génération GPX sur les 3 fichiers de test réels (outdoor + indoor) |
+| Phase | v1 — file_manager & export GPX fusionnés dans `main` |
+| Branche de référence | `main` |
+| Dernière mise à jour | 2026-05-14 |
+| Prochaine action | Étendre la couverture matérielle au-delà de Suunto Spartan Ultra / Garmin Edge |
 
 ---
 

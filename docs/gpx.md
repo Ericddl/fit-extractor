@@ -5,9 +5,9 @@
 | Champ | Valeur |
 |---|---|
 | **Nom de l'évolution** | Génération d'un fichier GPX à partir des points GPS du FIT |
-| **Fichier feature** | `features/gpx_export_change.md` |
+| **Fichier feature** | `docs/gpx.md` |
 | **Date de rédaction** | 2026-05-14 |
-| **Statut** | `Brouillon` |
+| **Statut** | `Livré` (fusionné dans `main`) |
 | **Priorité** | `Must` |
 
 ---

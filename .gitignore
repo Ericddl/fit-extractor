@@ -12,6 +12,16 @@ venv/
 !/import/.gitkeep
 !/export/.gitkeep
 
+# Filet de sécurité : aucune donnée d'activité ne doit être committée,
+# où qu'elle se trouve dans l'arborescence
+*.fit
+*.fit.gz
+*.gpx
+*.tcx
+
+# Outils IA (config locale, non partagée)
+.claude/settings.local.json
+
 # Éditeur / OS
 .DS_Store
 .idea/
