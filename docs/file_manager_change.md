@@ -5,9 +5,9 @@
 | Champ | Valeur |
 |---|---|
 | **Nom de l'évolution** | Gestion des dossiers `import/` et `export/` |
-| **Fichier feature** | `features/file_manager_change.md` |
+| **Fichier feature** | `docs/file_manager_change.md` |
 | **Date de rédaction** | 2026-05-14 |
-| **Statut** | `Brouillon` |
+| **Statut** | `Livré` (fusionné dans `main`) |
 | **Priorité** | `Must` |
 
 ---
