@@ -42,6 +42,14 @@ Vérifier les limites GPS invalides (code 2, avant parsing), les échecs d’exp
 (code 1), l’absence de doublons en mode détaillé et la stabilité du rendu standard.
 Documenter les commandes exécutées et ce qui n’a pas pu être vérifié.
 
+Les analyses sportives sont incluses par défaut. Pour les valider, construire des
+records synthétiques avec distances et horodatages connus : limites kilométriques,
+dernier segment court, plusieurs limites entre deux points, FC manquante, interruptions
+et régressions. Vérifier les pentes ±3 %, les fenêtres de 50 m, le filtrage d’un pic
+d’altitude, l’absence de GPS et les unités course/natation/vélo. Compléter sur des
+copies de FIT des quatre sports disponibles. `activity_analysis.py` n’effectue
+aucune écriture et ne doit pas modifier les données reçues.
+
 ## Invariants à respecter
 
 Ces règles portent la conception du projet — une PR qui les enfreint sera refusée, sauf discussion préalable en issue :
@@ -55,9 +63,10 @@ Ces règles portent la conception du projet — une PR qui les enfreint sera ref
 - **Ne jamais écrire un `.fit` décompressé sur disque** : un `.fit.gz` est décompressé en mémoire.
 - **Ne jamais écraser un fichier existant** sans `--force`.
 - **Tous les labels de sortie en français.**
-- **Séparation des modules** : chemins / nommage / archivage dans `file_manager.py`, GPS / GPX dans `gpx_exporter.py`, parsing + formatage + CLI dans `extractor.py`.
+- **Séparation des modules** : chemins / nommage / archivage dans `file_manager.py`, GPS / GPX dans `gpx_exporter.py`, calculs sportifs purs dans `activity_analysis.py`, parsing + formatage + CLI dans `extractor.py`.
 - **Publier et archiver via `export_activity()`** : annuler les sorties et restaurer les anciennes en cas d’erreur gérée, archivage compris. Ne supprimer la source qu’en dernier.
 - **`--details` reste optionnel** : pas de RR bruts ni de séries intégrales ; moyennes d’échantillons explicitement non pondérées.
+- **Analyses par défaut** : FC pondérée par les durées valides, dénivelé signalé comme estimé ; aucune interpolation à travers une interruption, aucune assimilation du chronomètre au mouvement réel.
 
 La liste complète et son rationale sont dans [`docs/SPEC.md`](docs/SPEC.md) et [`CLAUDE.md`](CLAUDE.md).
 

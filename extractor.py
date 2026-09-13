@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fitparse import FitFile, StandardUnitsDataProcessor
 
+from activity_analysis import activity_speed, analyze_records, numeric_field, preferred_number
 from file_manager import (
     ensure_workdirs,
     export_activity,
@@ -99,19 +100,36 @@ def compute_hrv(rr_intervals: list) -> tuple:
 
 
 def _fmt_duration(seconds) -> str:
-    if seconds is None:
+    if not _finite_number(seconds) or seconds < 0:
         return "-"
     h, rem = divmod(int(seconds), 3600)
     m, s = divmod(rem, 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def _fmt_pace(speed_kmh) -> str:
-    if not speed_kmh or speed_kmh <= 0:
+def _fmt_pace(speed_kmh, distance_km: float = 1) -> str:
+    if not _finite_number(speed_kmh) or speed_kmh <= 0:
         return "-"
-    pace = 60 / speed_kmh
-    minutes, frac = divmod(pace, 1)
-    return f"{int(minutes)}:{round(frac * 60):02d} /km"
+    minutes, seconds = divmod(round(3600 * distance_km / speed_kmh), 60)
+    unit = "100 m" if distance_km == 0.1 else "km"
+    return f"{minutes}:{seconds:02d} /{unit}"
+
+
+def _fmt_effort(speed, sport: str) -> str:
+    if not _finite_number(speed) or speed < 0:
+        return "-"
+    if sport in {"running", "swimming"}:
+        return _fmt_pace(speed, 0.1 if sport == "swimming" else 1)
+    return f"{speed:.1f} km/h"
+
+
+def _swim_stroke(value) -> str:
+    if value is None:
+        return "-"
+    labels = {"freestyle": "Crawl", "backstroke": "Dos", "breaststroke": "Brasse",
+              "butterfly": "Papillon", "drill": "Éducatifs", "mixed": "Mixte",
+              "im": "Quatre nages"}
+    return labels.get(str(value), f"Autre ({value})")
 
 
 def _fmt_recovery(seconds) -> str:
@@ -227,6 +245,84 @@ def _append_record_summary(lines: list, records: list) -> None:
         ])
 
 
+def _append_analysis_table(lines: list, title: str, headers: list, rows: list, note: str = "") -> None:
+    if not rows:
+        return
+    lines.extend([f"## {title}", ""])
+    if note:
+        lines.extend([note, ""])
+    lines.append("| " + " | ".join(headers) + " |")
+    lines.append("| " + " | ".join("---" for header in headers) + " |")
+    lines.extend("| " + " | ".join(_markdown_cell(cell) for cell in row) + " |" for row in rows)
+    lines.extend(["", "---", ""])
+
+
+def _append_activity_analysis(lines: list, analysis: dict, sport: str, elapsed, timer) -> None:
+    rows = []
+    for row in analysis["kilometers"]:
+        complete = row["complete"] and row["seconds"] > 0
+        speed = row["distance"] / row["seconds"] * 3.6 if complete else None
+        status = "Complet" if complete else "Incomplet"
+        if complete and row["distance"] < 1000:
+            status = "Dernier segment"
+        rows.append([
+            int(row["start"] // 1000) + 1, f"{row['distance'] / 1000:.3f} km", status,
+            _fmt_duration(row["seconds"]) if complete else "-", _fmt_effort(speed, sport),
+            f"{row['heart_rate']:.0f} bpm" if complete and row["heart_rate"] is not None else "-",
+            f"{row['ascent']:.0f} m" if complete and row["altitude_complete"] else "-",
+            f"{row['descent']:.0f} m" if complete and row["altitude_complete"] else "-",
+        ])
+    _append_analysis_table(
+        lines, "Découpage kilométrique", ["Km", "Distance", "État", "Durée enregistrée", "Allure", "FC moy.", "D+ estimé", "D− estimé"], rows,
+        "Limites interpolées sur la distance cumulée FIT. La durée enregistrée peut inclure des arrêts. "
+        "Aucune interpolation à travers une interruption ; dénivelé estimé après médiane glissante de cinq points. "
+        "FC pondérée par les durées des intervalles avec deux mesures FC valides.",
+    )
+    terrain_rows = []
+    for name, row in analysis["terrain"].items():
+        speed = row["distance"] / row["seconds"] * 3.6
+        terrain_rows.append([
+            name, f"{row['distance'] / 1000:.2f} km", _fmt_duration(row["seconds"]),
+            _fmt_effort(speed, sport),
+            f"{row['heart_rate']:.0f} bpm" if row["heart_rate"] is not None else "-",
+        ])
+    _append_analysis_table(
+        lines, "Répartition du terrain", ["Terrain", "Distance", "Durée enregistrée", "Allure" if sport == "running" else "Vitesse", "FC moy."], terrain_rows,
+        f"Estimation à partir de l’altitude enregistrée : {analysis['terrain_distance'] / 1000:.2f} km analysés. "
+        "Médiane glissante de cinq points ; tronçons de 50 m ; montée au-dessus de +3 %, "
+        "descente sous −3 %, plat entre ces seuils. Portions trop courtes ou interrompues exclues. "
+        "Les FC moyennes des analyses sont pondérées par les durées où la FC est disponible aux deux extrémités.",
+    )
+    quality = analysis["quality"]
+    total = quality["records"]
+    quality_rows = [["Records", total]]
+    for key, label in (("heart_rate", "FC exploitable"), ("gps", "Coordonnées GPS valides"), ("altitude", "Altitude disponible")):
+        coverage = f"{100 * quality[key] / total:.1f} % ({quality[key]}/{total})" if total else "-"
+        quality_rows.append([label, coverage])
+    for key, label in (("missing_time", "Horodatages absents ou invalides"),
+                       ("missing_distance", "Distances absentes ou invalides"),
+                       ("non_increasing_time", "Horodatages non croissants"),
+                       ("distance_regressions", "Régressions de distance")):
+        if quality[key]:
+            quality_rows.append([label, quality[key]])
+    quality_rows.append(["Interruptions temporelles", quality["gaps"]])
+    if quality["gaps"]:
+        quality_rows.append(["Plus grande interruption", f"{quality['largest_gap']:.1f} s"])
+    if analysis["kilometer_reason"]:
+        quality_rows.append(["Découpage kilométrique indisponible", analysis["kilometer_reason"]])
+    if sport in {"running", "cycling"} and not analysis["terrain"]:
+        quality_rows.append(["Terrain indisponible", "aucun tronçon continu de 50 m avec distance, temps et altitude exploitables"])
+    if _finite_number(elapsed) and _finite_number(timer) and (timer < 0 or elapsed < timer):
+        quality_rows.append(["Durées incohérentes", "temps hors chronomètre non calculé"])
+    _append_analysis_table(
+        lines, "Qualité de l’enregistrement", ["Indicateur", "Valeur"], quality_rows,
+        f"Interruption : écart supérieur à {quality['gap_limit']:.1f} s "
+        "(max de 10 s et de cinq fois l’intervalle médian positif). "
+        "Ce critère n’identifie pas automatiquement une pause ou une perte GPS. "
+        "La couverture décrit les records, pas une proportion de la durée.",
+    )
+
+
 def format_markdown(
     data: dict,
     device: str,
@@ -249,11 +345,16 @@ def format_markdown(
             session_consumed.add(key)
         return entry[0] if entry and entry[0] is not None else None
 
-    def sv_speed():
-        return sv("avg_speed") or sv("enhanced_avg_speed")
+    def session_number(key, unit=None):
+        value = numeric_field(session, key, unit)
+        if value is not None:
+            session_consumed.add(key)
+        return value
 
     # --- Header ---
     sport = str(sv("sport") or "")
+    sport_kind = sport.lower()
+    analysis = analyze_records(data["records"], sport_kind)
     sub_sport = str(sv("sub_sport") or "")
     start_time = sv("start_time")
 
@@ -291,17 +392,19 @@ def format_markdown(
     lines.append("| Métrique | Valeur |")
     lines.append("|----------|--------|")
 
-    dist = sv("total_distance")
+    dist = session_number("total_distance", "m")
     if dist is not None:
         lines.append(f"| Distance | {dist / 1000:.2f} km |")
 
-    elapsed = sv("total_elapsed_time")
+    elapsed = session_number("total_elapsed_time", "s")
     if elapsed is not None:
         lines.append(f"| Durée totale | {_fmt_duration(elapsed)} |")
 
-    timer = sv("total_timer_time")
+    timer = session_number("total_timer_time", "s")
     if timer is not None:
-        lines.append(f"| Durée en mouvement | {_fmt_duration(timer)} |")
+        lines.append(f"| Durée chronométrée | {_fmt_duration(timer)} |")
+    if elapsed is not None and timer is not None and 0 <= timer <= elapsed:
+        lines.append(f"| Temps hors chronomètre | {_fmt_duration(elapsed - timer)} |")
 
     ascent = sv("total_ascent")
     if ascent is not None:
@@ -311,12 +414,22 @@ def format_markdown(
     if descent is not None:
         lines.append(f"| Dénivelé - | {descent} m |")
 
-    speed = sv_speed()
+    speed = activity_speed(session)
     if speed is not None:
-        lines.append(f"| Vitesse moyenne | {speed:.1f} km/h |")
-        is_running = "run" in sport.lower() or device == "suunto"
-        if is_running and speed > 0:
-            lines.append(f"| Allure moyenne | {_fmt_pace(speed)} |")
+        session_consumed.update({"avg_speed", "enhanced_avg_speed"})
+        label = "Allure moyenne" if sport_kind in {"running", "swimming"} else "Vitesse moyenne"
+        lines.append(f"| {label} | {_fmt_effort(speed, sport_kind)} |")
+
+    for key, label, operation in (("min_altitude", "Altitude minimale", min), ("max_altitude", "Altitude maximale", max)):
+        altitude = preferred_number(session, key, "m")
+        source_label = ""
+        if altitude is not None:
+            session_consumed.update({key, f"enhanced_{key}"})
+        elif analysis["altitudes"]:
+            altitude = operation(analysis["altitudes"])
+            source_label = " (records)"
+        if altitude is not None:
+            lines.append(f"| {label}{source_label} | {altitude:.0f} m |")
 
     avg_hr = sv("avg_heart_rate")
     if avg_hr is not None:
@@ -342,9 +455,24 @@ def format_markdown(
     if cadence is not None:
         lines.append(f"| Cadence moy. | {cadence} foulées/min |")
 
-    vam = sv("avg_vam")
+    if sport_kind == "swimming":
+        cycles = session_number("total_cycles")
+        if cycles is not None and cycles >= 0:
+            lines.append(f"| Cycles de nage | {cycles:g} |")
+        swim_cadence = session_number("avg_cadence", "rpm")
+        if swim_cadence is not None and swim_cadence >= 0:
+            lines.append(f"| Cadence de nage | {swim_cadence:g} cycles/min |")
+        strokes = {str(lap["swim_stroke"][0]) for lap in data["laps"]
+                   if lap.get("swim_stroke") and lap["swim_stroke"][0] is not None}
+        if sv("swim_stroke") is not None:
+            strokes.add(str(sv("swim_stroke")))
+        if strokes:
+            labels = ", ".join(_swim_stroke(stroke) for stroke in sorted(strokes))
+            lines.append(f"| Types de nage | {_markdown_cell(labels)} |")
+
+    vam = session_number("avg_vam", "m/h")
     if vam is not None:
-        lines.append(f"| VAM | {vam:.1f} m/s |")
+        lines.append(f"| VAM | {vam:.0f} m/h |")
 
     tss = sv("training_stress_score")
     if tss is not None:
@@ -353,6 +481,9 @@ def format_markdown(
     te = sv("total_training_effect")
     if te is not None:
         lines.append(f"| Training Effect | {te} |")
+    anaerobic_te = session_number("total_anaerobic_training_effect")
+    if anaerobic_te is not None:
+        lines.append(f"| Training Effect anaérobie | {anaerobic_te:g} |")
 
     lines.append("")
     lines.append("---")
@@ -365,16 +496,20 @@ def format_markdown(
 
     if hr_zones is not None:
         zone_list = hr_zones if isinstance(hr_zones, (list, tuple)) else [hr_zones]
+        zone_total = sum(value for value in zone_list if _finite_number(value) and value >= 0)
         lines.append("## Zones d'entraînement")
-        lines.append("| Zone | Durée |")
-        lines.append("|------|-------|")
+        lines.append("Pourcentages calculés sur la somme des durées de zones FC valides, pas sur la durée totale.")
+        lines.append("")
+        lines.append("| Zone | Durée | Part du temps en zones FC |")
+        lines.append("|------|-------|-------|")
         for i, zt in enumerate(zone_list, 1):
-            if zt is not None:
-                lines.append(f"| Zone {i} | {_fmt_duration(zt)} |")
+            if _finite_number(zt) and zt >= 0:
+                percentage = f"{100 * zt / zone_total:.1f} %" if zone_total > 0 else "-"
+                lines.append(f"| Zone {i} | {_fmt_duration(zt)} | {percentage} |")
         if aerobic_zone_time is not None:
-            lines.append(f"| Aérobie | {_fmt_duration(aerobic_zone_time)} |")
+            lines.append(f"| Aérobie | {_fmt_duration(aerobic_zone_time)} | - |")
         if anaerobic_zone_time is not None:
-            lines.append(f"| Anaérobie | {_fmt_duration(anaerobic_zone_time)} |")
+            lines.append(f"| Anaérobie | {_fmt_duration(anaerobic_zone_time)} | - |")
         lines.append("")
         lines.append("---")
         lines.append("")
@@ -495,8 +630,12 @@ def format_markdown(
     # --- Tours / Laps ---
     if data["laps"]:
         lines.append("## Tours / Laps")
-        lines.append("| # | Distance | Durée | FC moy | FC max | Vitesse | Dénivelé+ | Temp. |")
-        lines.append("|---|----------|-------|--------|--------|---------|-----------|-------|")
+        effort_label = "Allure" if sport_kind in {"running", "swimming"} else "Vitesse"
+        headers = ["#", "Distance", "Durée", "FC moy", "FC max", effort_label, "Dénivelé+", "Temp."]
+        if sport_kind == "swimming":
+            headers.extend(["Nage", "Cycles", "Cadence (cycles/min)"])
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("| " + " | ".join("---" for header in headers) + " |")
 
         for i, lap in enumerate(data["laps"], 1):
             lap_consumed = set()
@@ -507,7 +646,9 @@ def format_markdown(
                     lap_consumed.add(key)
                 return entry[0] if entry and entry[0] is not None else None
 
-            dist_l = lv("total_distance")
+            dist_l = numeric_field(lap, "total_distance", "m")
+            if dist_l is not None:
+                lap_consumed.add("total_distance")
             dist_s = f"{dist_l / 1000:.2f} km" if dist_l is not None else "-"
 
             dur_l = lv("total_timer_time")
@@ -521,8 +662,10 @@ def format_markdown(
             max_hr_l = lv("max_heart_rate")
             max_hr_s = f"{max_hr_l} bpm" if max_hr_l is not None else "-"
 
-            speed_l = lv("avg_speed") or lv("enhanced_avg_speed")
-            speed_s = f"{speed_l:.1f} km/h" if speed_l is not None else "-"
+            speed_l = activity_speed(lap)
+            if speed_l is not None:
+                lap_consumed.update({"avg_speed", "enhanced_avg_speed", "total_timer_time"})
+            speed_s = _fmt_effort(speed_l, sport_kind)
 
             ascent_l = lv("total_ascent")
             ascent_s = f"{ascent_l} m" if ascent_l is not None else "-"
@@ -530,10 +673,20 @@ def format_markdown(
             temp_l = lv("avg_temperature")
             temp_s = f"{temp_l} °C" if temp_l is not None else "-"
 
-            lines.append(
-                f"| {i} | {dist_s} | {dur_s} | {avg_hr_s} | {max_hr_s}"
-                f" | {speed_s} | {ascent_s} | {temp_s} |"
-            )
+            cells = [i, dist_s, dur_s, avg_hr_s, max_hr_s, speed_s, ascent_s, temp_s]
+            if sport_kind == "swimming":
+                swim_cycles = numeric_field(lap, "total_cycles")
+                swim_cadence = numeric_field(lap, "avg_cadence", "rpm")
+                cells.extend([
+                    _swim_stroke(lv("swim_stroke")),
+                    f"{swim_cycles:g}" if swim_cycles is not None and swim_cycles >= 0 else "-",
+                    f"{swim_cadence:g}" if swim_cadence is not None and swim_cadence >= 0 else "-",
+                ])
+                if swim_cycles is not None:
+                    lap_consumed.add("total_cycles")
+                if swim_cadence is not None:
+                    lap_consumed.add("avg_cadence")
+            lines.append("| " + " | ".join(_markdown_cell(cell) for cell in cells) + " |")
 
         lines.append("")
         lines.append("---")
@@ -578,6 +731,8 @@ def format_markdown(
             lines.append("---")
             lines.append("")
 
+    _append_activity_analysis(lines, analysis, sport_kind, elapsed, timer)
+
     if details:
         _append_detail_table(lines, "Champs complémentaires de séance", [
             ("Séance", session, session_consumed),
@@ -591,7 +746,7 @@ def format_markdown(
 
     # --- Footer ---
     lines.append(
-        f"*Généré depuis `{source_path.name}` — {len(data['records'])} points GPS — {product_name}*"
+        f"*Généré depuis `{source_path.name}` — {len(data['records'])} enregistrements — {product_name}*"
     )
 
     return "\n".join(lines)

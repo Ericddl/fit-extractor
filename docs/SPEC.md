@@ -50,6 +50,7 @@ L'utilisateur colle le Markdown dans une IA de coaching. Le Markdown doit donc �
 ```
 fit-extractor/
 ├── extractor.py          # Script principal, point d'entrée CLI
+├── activity_analysis.py  # Calculs sportifs purs, sans accès disque
 ├── file_manager.py       # Résolution des chemins, nommage, déplacement
 ├── gpx_exporter.py       # Extraction des points GPS et génération du GPX 1.1
 ├── requirements.txt      # fitparse uniquement
@@ -79,7 +80,8 @@ import/fichier.fit (.gz)
   → détection du profil matériel (Suunto vs Garmin vs autre)
   → planification du basename normalisé
       YYYY-MM-DD_<activité>_<indice>
-  → formatage Markdown conditionnel, compléments optionnels avec --details
+  → analyse des records (kilomètres, terrain, qualité) selon le sport
+  → formatage Markdown sportif par défaut, compléments techniques avec --details
   → extraction GPS et construction du GPX éventuel en mémoire
   → préparation des fichiers temporaires et copie exacte de la source
   → sauvegarde des anciennes sorties puis publication Markdown/GPX/archive
@@ -89,6 +91,17 @@ import/fichier.fit (.gz)
 ---
 
 ## 3. Components
+
+### `activity_analysis.py`
+
+- **Rôle** : calculs purs sans accès disque ni mutation des données FIT.
+- **Interfaces** : `numeric_field(fields, key, unit=None)`,
+  `preferred_number(fields, key, unit)`, `activity_speed(fields)`,
+  `analyze_records(records, sport)`.
+- **Sortie d’analyse** : qualité de l’enregistrement, kilomètres, motif éventuel
+  d’indisponibilité, agrégats terrain et distance analysée, altitudes valides.
+- **Dépendances** : `math`, `dataclasses`, `datetime`, `statistics` (stdlib).
+- `extractor.py` reste responsable du rendu français et du suivi des champs déjà affichés.
 
 ### `extractor.py`
 
@@ -217,9 +230,68 @@ sont conditionnées par la présence de leurs données, pas strictement par la m
 ### Calculs dérivés
 
 - **Durée** : `total_elapsed_time` (s) → `HH:MM:SS` via `divmod`
-- **Allure running** : `60 / avg_speed` (km/h) → `MM:SS /km`
+- **Allures** : distance positive / durée chronométrée positive, sinon vitesse
+  moyenne FIT valide (enhanced prioritaire). Course/trail : min/km ; natation :
+  min/100 m ; vélo et autres sports : km/h. Arrondir les secondes avant formatage.
+- **Temps hors chronomètre** : durée totale − durée chronométrée, seulement si
+  les deux valeurs sont valides et `0 ≤ durée chronométrée ≤ durée totale`.
+  Une incohérence est signalée dans la qualité, pas corrigée arbitrairement.
+- **Zones FC** : pourcentage sur la somme des durées numériques finies non négatives,
+  sans inclure les catégories aérobie/anaérobie. Somme nulle : pourcentage `-`.
+- **Natation** : cycles, cadence en cycles/min sans facteur cycles/bras, types de
+  nage français par tour et ensemble des types présents au résumé. Valeur inconnue :
+  `Autre (<valeur FIT>)`. Pas de SWOLF.
+- **Autres champs promus au résumé** : Training Effect anaérobie (zéro conservé),
+  VAM en m/h selon l’unité FIT, altitudes min/max enhanced puis standard puis records.
+  Le repli sur les records est explicitement signalé.
 - **Temps de récupération** : `recovery_time` (s) → `Xh YYmin`
 - **Zones FC** : `time_in_hr_zone` est un tuple `(z1, z2, z3, z4, z5)` en secondes → formater chaque zone
+
+### Analyses sportives affichées par défaut
+
+Les analyses utilisent les records déjà extraits, indépendamment de `--details`.
+Elles n’ajoutent aucun type de message FIT et ne modifient ni le GPX ni l’archivage.
+
+**Normalisation et continuité** : convertir `distance` en mètres à partir de son
+unité, privilégier une altitude enhanced finie, accepter une FC numérique finie
+strictement positive sans filtre physiologique supplémentaire. Les dates FIT
+naïves sont interprétées en UTC. Ne pas reconstruire la distance depuis le GPS.
+Un intervalle est exploitable si ses dates croissent, si la distance ne régresse
+pas et si sa durée ne dépasse pas `max(10 s, 5 × médiane des intervalles positifs)`.
+Les points manquants ou invalides coupent la continuité ; ne pas les franchir par interpolation.
+
+**Découpage kilométrique (course/trail)** : limites à chaque multiple de 1 000 m
+de la distance FIT, interpolées linéairement dans les intervalles exploitables.
+Le dernier segment conserve sa distance réelle. Si l’enregistrement débute après
+une limite, le premier kilomètre est incomplet. Les kilomètres dont la couverture
+est incomplète n’affichent ni durée complète ni allure, FC ou dénivelé trompeurs.
+Une régression de distance ou un recul d’horodatage supprime ce tableau avec motif
+dans la qualité. Un garde-fou refuse une plage de plus de 10 000 kilomètres.
+La durée est celle des horodatages (« durée enregistrée »), qui peut inclure des
+arrêts. Les intervalles stationnaires sont affectés au kilomètre de leur position,
+au suivant sur une limite exacte, ou au dernier à la fin du parcours.
+
+**Altitude et terrain (course/trail/vélo)** : médiane glissante centrée de cinq
+points sur chaque portion continue avec temps, distance et altitude valides ;
+aux extrémités, utiliser seulement les points disponibles. Dénivelé kilométrique
+estimé par cumul des variations filtrées pendant les déplacements, sans franchir
+de trou d’altitude. Terrain : tronçons de 50 m à partir du début de chaque portion,
+pente nette > +3 % en montée, < −3 % en descente, bornes incluses dans le plat.
+Les reliquats de moins de 50 m sont exclus ; afficher la distance analysée.
+Ignorer les portions dépassant 10 000 km, hors domaine d’usage de cette analyse.
+Ne pas assimiler le dénivelé estimé au total de l’appareil.
+
+**FC des analyses** : interpolation linéaire entre deux FC valides, intégration
+sur la durée, puis division par le temps couvert par la FC. Les intervalles à FC
+manquante ne participent pas au dénominateur ; absence complète : `-`. Cette moyenne
+pondérée diffère volontairement de la synthèse d’échantillons de `--details`.
+
+**Qualité** : nombre de records et couverture FC, GPS valide (lat/lon en degrés
+dans les plages admises) et altitude finie ; dénominateur = nombre de records,
+pas durée totale. Signaler les dates absentes/non croissantes, distances invalides
+ou régressives, nombre d’interruptions et plus grande interruption. Ce critère ne
+détermine pas la cause d’un trou. Les analyses indisponibles sont expliquées ici,
+y compris en l’absence de tout record.
 
 ### Workflow import/ → export/
 
@@ -346,10 +418,10 @@ Chaque section est **conditionnelle** — elle n'apparaît que si les données s
 |----------|--------|
 | Distance | 14.52 km |
 | Durée totale | 02:51:23 |
-| Durée en mouvement | 02:51:22 |
+| Durée chronométrée | 02:51:22 |
+| Temps hors chronomètre | 00:00:01 |
 | Dénivelé + | 626 m |
 | Dénivelé - | 601 m |
-| Vitesse moyenne | 5.1 km/h |
 | Allure moyenne | 11:48 /km |        ← running uniquement
 | FC moyenne | 120 bpm |
 | FC max | 143 bpm |
@@ -357,7 +429,7 @@ Chaque section est **conditionnelle** — elle n'apparaît que si les données s
 | Calories | 1781 kcal |
 | Température moy. | 22 °C |
 | Cadence moy. | 65 foulées/min |     ← running uniquement
-| VAM | 0.1 m/s |                     ← vélo uniquement
+| VAM | 360 m/h |                     ← si fournie
 | Training Stress Score | 115.8 TSS |
 | Training Effect | 2.4 |
 
@@ -490,6 +562,8 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | Module `gpx_exporter.py` dédié | Sépare la génération XML du parsing FIT | Tout garder dans `extractor.py` |
 | Préparation puis restauration sur erreur gérée | Évite les exports partiels, archivage compris | Écrire le Markdown avant de construire le GPX |
 | Mode `--details` optionnel | Complète les métriques sans allonger le résumé par défaut | Dérouler toutes les séries brutes |
+| Analyses sportives par défaut dans un module pur | Kilomètres, terrain et qualité utilisables sans option technique | Coupler les calculs aux écritures ou les masquer dans `--details` |
+| Estimations avec couverture explicite | Éviter les allures et dénivelés trompeurs sur données interrompues | Interpoler tous les trous ou confondre temps chronométré et mouvement |
 | Synthèses sans dépendance supplémentaire | Comptages et statistiques simples avec la stdlib | Ajouter une bibliothèque de données |
 
 ---
@@ -565,6 +639,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 
 | Date | Changement |
 |------|------------|
+| 2026-09-13 | Markdown adapté au sport : natation, allures par tour, zones en %, temps hors chronomètre, TE anaérobie, VAM et altitudes ; analyses kilométriques, terrain et qualité par défaut via `activity_analysis.py` |
 | 2026-09-13 | Validation GPS positive, publication avec restauration sur erreur incluant l’archivage, mode `--details`, clarification des spécifications et des consignes |
 | 2026-05-13 | Initialisation du projet et de la spec v1 |
 | 2026-05-13 | v2 : analyse réelle de 3 fichiers FIT (Suunto Spartan Ultra + Garmin Edge). Refonte cible (coaching IA), extraction générique, HRV calculé, developer fields Suunto documentés, sections conditionnelles, suppression unknown_XXX |
@@ -603,6 +678,7 @@ Ce projet a été développé et testé sur deux matériels réels :
 - Toute nouvelle section Markdown doit être conditionnelle
 - Toute logique de chemin / nommage / déplacement appartient à `file_manager.py`, pas à `extractor.py`
 - Toute logique d'extraction GPS / génération XML GPX appartient à `gpx_exporter.py`, pas à `extractor.py`
+- Les calculs kilométriques, terrain et qualité appartiennent à `activity_analysis.py`, sans accès disque ; leur rendu reste dans `extractor.py`
 - Respecter le workflow `import/` → `export/` : ne pas réintroduire d'écriture par défaut à côté du `.fit` source
 - Le GPX doit rester en stdlib (`xml.etree.ElementTree`) — pas d'ajout de dépendance `gpxpy` ou autre
 

@@ -16,6 +16,7 @@ Le traitement est local, sans appel réseau ni API d’IA.
 ## Architecture et dépendances
 
 - `extractor.py` : CLI `argparse`, parsing FIT, calcul HRV et rendu Markdown.
+- `activity_analysis.py` : calculs purs d’allure, kilomètres, terrain et qualité, sans accès disque.
 - `file_manager.py` : chemins, nommage, collisions et archivage des sources.
 - `gpx_exporter.py` : filtrage GPS et génération XML avec `xml.etree.ElementTree`.
 - Python 3.10+ ; seule dépendance externe : `fitparse>=1.2.0` dans `requirements.txt`.
@@ -55,6 +56,8 @@ python3 -m venv .venv
 - `--gps` et `--gps-limit` concernent seulement le Markdown ; le GPX conserve
   toute la trace exploitable. Une limite non positive est refusée avant parsing.
 - Codes de sortie : 0 succès, 1 erreur de traitement, 2 arguments invalides.
+- Les analyses sportives sont affichées par défaut ; `--details` ajoute seulement
+  les compléments techniques. Course : min/km ; natation : min/100 m ; vélo : km/h.
 
 ## Validation
 
@@ -67,7 +70,10 @@ Il n’y a ni dossier `examples/` ni jeu de FIT de test versionné.
 - Tester les écritures, collisions et déplacements uniquement sur des copies
   de données dans un emplacement de test ; `--stdout` ne valide pas ces étapes.
 - Simuler les erreurs d’écriture et d’archivage avec `unittest.mock` et `tempfile` ;
-  vérifier la restauration octet pour octet et la stabilité du rendu sans `--details`.
+  vérifier la restauration octet pour octet et le rendu avec/sans `--details`.
+- Vérifier les kilomètres interpolés, interruptions, régressions, pentes ±3 %,
+  FC partielle et données absentes sur des records synthétiques ; compléter sur
+  copies de FIT course/trail/vélo/natation sans toucher aux originaux.
 - Indiquer les commandes exécutées et les limites de validation ; ne pas
   présenter l’affichage de l’aide comme un test complet de conversion.
 
@@ -83,6 +89,13 @@ Il n’y a ni dossier `examples/` ni jeu de FIT de test versionné.
 - Garder les titres et libellés utilisateur en français, les unités explicites
   et les sections facultatives conditionnées par les données disponibles.
 - HRV : rendre RMSSD et SDNN, jamais les intervalles RR bruts.
+- Les kilomètres et le terrain utilisent la distance FIT, pas une distance GPS
+  reconstruite. Ne pas interpoler les interruptions ; signaler les analyses incomplètes.
+- Terrain : médiane de cinq points par portion continue, tronçons de 50 m, seuils
+  ±3 %, dénivelé estimé. Les FC de ces analyses sont pondérées par les durées valides,
+  contrairement aux synthèses d’échantillons de `--details`.
+- Ne pas confondre durée chronométrée, durée enregistrée et mouvement réel ; ne
+  pas inventer de puissance, de SWOLF ou d’interprétation des champs propriétaires.
 - Décompresser uniquement en mémoire ; préserver l’extension composée `.fit.gz`
   à l’archivage (`name.lower().endswith(".fit.gz")`).
 - Utiliser `export_activity()` pour le lot Markdown/GPX/archive ; supprimer la

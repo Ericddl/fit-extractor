@@ -5,7 +5,9 @@
 
 CLI Python qui convertit un fichier `.fit` (montre Suunto, compteur Garmin) en **Markdown dense**, prêt à coller dans ChatGPT ou Claude pour de l'analyse et du coaching sportif — plus un **fichier GPX 1.1** de la trace complète.
 
-Une séance de trail de 1h30 (11 000 intervalles RR, 5 500 points GPS) tient en ~2 Ko de Markdown lisible : tout ce qu'une IA a besoin de savoir, rien qui sature son contexte.
+Les séries brutes sont remplacées par des résumés et des tableaux : allures adaptées
+au sport, kilomètres, terrain et qualité de l’enregistrement. La taille du Markdown
+dépend notamment du nombre de tours et de kilomètres, sans dérouler les intervalles RR.
 
 ```
 import/Trail_le_matin.fit
@@ -155,9 +157,9 @@ python3 extractor.py Trail_le_matin.fit --output activites/trail.md --force
 ---
 
 ## Tours / Laps
-| # | Distance | Durée | FC moy | FC max | Vitesse | Dénivelé+ | Temp. |
+| # | Distance | Durée | FC moy | FC max | Allure | Dénivelé+ | Temp. |
 |---|----------|-------|--------|--------|---------|-----------|-------|
-| 1 | 3.36 km | 00:30:15 | 133 bpm | 163 bpm | 6.7 km/h | 92 m | 16 °C |
+| 1 | 3.36 km | 00:30:15 | 133 bpm | 163 bpm | 9:00 /km | 92 m | 16 °C |
 ```
 
 ## Sections générées
@@ -165,15 +167,60 @@ python3 extractor.py Trail_le_matin.fit --output activites/trail.md --force
 Les sections n'apparaissent que si les données correspondantes existent dans le FIT :
 
 - **Résumé général** : distance, durée, FC, dénivelé, calories, allure/VAM, TSS, TE…
-- **Zones d'entraînement** : temps en zones FC + aérobie/anaérobie
+- **Zones d'entraînement** : temps et pourcentages en zones FC, catégories aérobie/anaérobie séparées
 - **Métriques avancées (Suunto)** : récupération, EPOC, ressenti, seuil aérobie…
 - **HRV** : RMSSD et SDNN calculés depuis les intervalles RR (Suunto uniquement)
 - **Profil utilisateur** (Garmin) : âge, poids, FC repos…
 - **Zones cibles** (Garmin) : FTP, seuil FC
 - **Tours / Laps** : tableau par lap
+- **Découpage kilométrique** : course et trail, avec allure, FC et dénivelé estimé
+- **Répartition du terrain** : montée/plat/descente en course, trail et vélo
+- **Qualité de l’enregistrement** : couverture FC/GPS/altitude, interruptions et données manquantes
 - **Points GPS** (Markdown échantillonné) : uniquement avec `--gps`
 
 Tous les labels sont en français.
+
+### Présentation adaptée au sport
+
+Le résumé et les tours affichent des min/km en course et trail, des min/100 m
+en natation, et des km/h en vélo ou pour les autres sports. Le choix dépend du
+sport, pas de la marque. L’allure utilise distance et durée chronométrée si elles
+sont positives, sinon la vitesse moyenne FIT disponible.
+
+La durée chronométrée est distinguée de la durée totale. Leur différence est
+affichée comme **temps hors chronomètre**, pas comme une mesure de tous les arrêts.
+Les pourcentages FC utilisent la somme des durées de zones valides, sans inventer
+de seuils cardiaques. Les catégories aérobie/anaérobie ne participent pas à cette somme.
+
+En natation, le type de nage, les cycles et la cadence sont affichés si disponibles,
+sans conversion cycles/bras ni calcul de SWOLF. Le Training Effect anaérobie est
+repris lorsqu’il est fourni. La VAM est présentée en m/h. Les altitudes minimale
+et maximale privilégient les champs de séance `enhanced_*`, puis standards ;
+le repli sur les records est signalé dans le libellé.
+
+### Analyses de parcours par défaut
+
+Ces analyses sont incluses sans `--details` lorsqu’elles sont calculables :
+
+- **Kilomètres** : limites interpolées dans la distance cumulée FIT, y compris le
+  dernier segment plus court. La durée enregistrée, issue des horodatages, peut
+  inclure des arrêts. Les kilomètres traversant une interruption restent marqués
+  incomplets, sans allure calculée ; une régression de temps ou de distance rend
+  le tableau indisponible. Aucun recalcul de distance depuis le GPS.
+- **Terrain** : altitude filtrée par médiane glissante de cinq points, puis pente
+  estimée sur des tronçons de 50 m. Montée au-dessus de +3 %, descente sous −3 %,
+  plat entre ces seuils. Les portions interrompues, trop courtes ou sans altitude
+  sont exclues ; la distance effectivement analysée est indiquée.
+- **Qualité** : proportions des records avec FC strictement positive, coordonnées
+  GPS valides et altitude finie ; horodatages manquants ou non croissants, distances
+  invalides ou régressives. Une interruption est un écart supérieur au maximum de
+  10 secondes et de cinq fois l’intervalle médian positif, sans présumer sa cause.
+
+Les FC des tableaux kilométriques et de terrain sont pondérées par le temps des
+intervalles où les deux mesures FC sont présentes. Le dénivelé calculé est une
+**estimation**, distincte du total fourni par l’appareil. Une section indisponible
+est expliquée dans la qualité ; l’absence de GPS n’empêche pas ces calculs si les
+distances et horodatages sont disponibles.
 
 ### Mode détaillé
 
@@ -208,11 +255,12 @@ matériels dépend des messages disponibles et du support de `fitparse`.
 
 ## Architecture
 
-Trois modules, sans framework :
+Quatre modules, sans framework :
 
 | Module | Rôle |
 |---|---|
 | [`extractor.py`](extractor.py) | Parsing FIT, calcul HRV, formatage Markdown, CLI |
+| [`activity_analysis.py`](activity_analysis.py) | Calculs purs : unités, allures, kilomètres, terrain et qualité |
 | [`file_manager.py`](file_manager.py) | Chemins, nommage `YYYY-MM-DD_<activité>_<indice>`, archivage du `.fit` |
 | [`gpx_exporter.py`](gpx_exporter.py) | Extraction des points GPS, génération du GPX 1.1 (`xml.etree.ElementTree`) |
 

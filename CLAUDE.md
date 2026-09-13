@@ -30,14 +30,33 @@ and avoid repeated fields or redundant standard/enhanced variants.
 
 ## Architecture
 
-Three modules: `extractor.py` (parsing + Markdown formatting + CLI orchestration), `file_manager.py` (paths, naming, archival), and `gpx_exporter.py` (GPS extraction + GPX 1.1 generation).
+Four modules: `extractor.py` (parsing, rendering, CLI), `activity_analysis.py`
+(pure sports calculations), `file_manager.py` (paths, publication, archival), and
+`gpx_exporter.py` (GPS extraction and GPX generation).
+
+Sports analyses appear by default; `--details` adds technical complements only.
+Select pace units by sport, never device: min/km for running, min/100 m for swimming,
+km/h otherwise. Use timer duration and distance when positive, then FIT average speed.
+Distinguish timer duration, elapsed duration and timestamp-based recorded duration.
+Show swimming strokes/cycles/cadence, HR-zone percentages, anaerobic Training Effect,
+altitude extrema and VAM in m/h only when the required fields are available.
+
+`analyze_records(records, sport)` returns quality indicators, kilometer splits,
+terrain aggregates and altitude samples without modifying input or accessing disk.
+Use FIT distance units explicitly; prefer valid enhanced altitude fields. Never
+interpolate gaps above max(10 s, 5 × median positive interval). Suppress kilometer
+splits on backwards timestamps or distance regressions; mark incomplete splits.
+Terrain uses a five-point median within continuous portions, 50 m windows and ±3%
+slope thresholds. Label elevation as estimated and show analyzed distance. HR means
+in these analyses are time-weighted over intervals with both HR endpoints present,
+unlike the unweighted sample summaries in `--details`. No new power/SWOLF calculations.
 
 Data flow:
 
 ```
 import/file.fit(.gz) → resolve_input_path → decompress in memory →
 fitparse + StandardUnitsDataProcessor → extract fields from selected message types →
-detect hardware (Suunto vs Garmin) → plan_output_paths (build basename, find next index) →
+detect hardware and analyze records by sport → plan_output_paths (build basename, find next index) →
 render conditional Markdown → extract_gps_points → if any: build_gpx in memory →
 export_activity: stage outputs and exact source copy → back up existing outputs →
 publish Markdown/GPX/archive → remove source last; restore outputs on handled error
@@ -94,8 +113,11 @@ No automated test suite or CI is checked in, and there is no `examples/` directo
 Check `python -B extractor.py --help` and `--stdout` with/without `--details` on
 appropriate FIT files when available. Exercise writes and injected failures only
 with synthetic data or copies in temporary directories (`unittest.mock`, `tempfile`).
-Verify byte-for-byte rollback, gzip preservation, collisions and unchanged default
-rendering. Report actual checks and limitations; help alone is not a conversion test.
+Verify byte-for-byte rollback, gzip preservation, collisions and sport-specific
+rendering. Exercise synthetic distance boundaries, ±3% slopes, altitude noise,
+gaps, missing HR and timestamp/distance regressions; validate real running, trail,
+cycling and swimming FIT copies when available. Report actual checks and limitations;
+help alone is not a conversion test.
 
 ## Hardware-Specific Sections
 
