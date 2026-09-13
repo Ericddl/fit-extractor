@@ -6,29 +6,28 @@ import gzip
 import io
 import math
 import sys
+from datetime import date, datetime, time
 from pathlib import Path
 
 from fitparse import FitFile, StandardUnitsDataProcessor
 
 from file_manager import (
     ensure_workdirs,
-    move_processed_fit,
+    export_activity,
     plan_output_paths,
     resolve_input_path,
     IMPORT_DIR,
-    EXPORT_DIR,
 )
 from gpx_exporter import (
     build_gpx,
     extract_gps_points,
     has_gps_points,
-    write_gpx_file,
 )
 
 
 def parse_fit(path: Path) -> dict:
     raw = path.read_bytes()
-    if path.suffix.lower() == ".gz":
+    if path.name.lower().endswith(".fit.gz"):
         raw = gzip.decompress(raw)
 
     fitfile = FitFile(io.BytesIO(raw), data_processor=StandardUnitsDataProcessor())
@@ -122,18 +121,132 @@ def _fmt_recovery(seconds) -> str:
     return f"{h}h {rem // 60:02d}min"
 
 
+def _positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("un entier strictement positif est requis") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError("un entier strictement positif est requis")
+    return number
+
+
+def _markdown_cell(value) -> str:
+    text = str(value) if value is not None else "-"
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(
+        ">", "&gt;"
+    ).replace("\\", "&#92;").replace("|", "&#124;").replace(
+        "`", "&#96;"
+    ).replace("\r", " ").replace("\n", " ")
+
+
+def _finite_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _numeric_summary(values: list) -> tuple:
+    numeric = [value for value in values if _finite_number(value)]
+    if not numeric:
+        return 0, "-", "-", "-"
+    mean = math.fsum(value / len(numeric) for value in numeric)
+    return len(numeric), f"{min(numeric):.6g}", f"{max(numeric):.6g}", f"{mean:.6g}"
+
+
+def _detail_value(value) -> str:
+    if value is None or isinstance(value, float) and not math.isfinite(value):
+        return "-"
+    if isinstance(value, (bytes, bytearray)):
+        return f"Données binaires ({len(value)} octets)"
+    if isinstance(value, dict):
+        return f"Données structurées ({len(value)} champs)"
+    if isinstance(value, (tuple, list)):
+        if len(value) <= 16:
+            return ", ".join(_detail_value(item) for item in value)
+        count, minimum, maximum, mean = _numeric_summary(value)
+        return (
+            f"{len(value)} éléments ; {count} valeurs numériques valides ; "
+            f"min {minimum} ; max {maximum} ; moyenne d’échantillons {mean}"
+        )
+    return str(value)
+
+
+def _canonical_field(key: str) -> str:
+    return key.removeprefix("enhanced_")
+
+
+def _detail_fields(fields: dict, consumed: set):
+    represented = {_canonical_field(key) for key in consumed}
+    for key in sorted(fields):
+        if key.startswith("unknown_") or key in {"hrv", "hrv_intervals", "rr_intervals"}:
+            continue
+        canonical = _canonical_field(key)
+        if canonical in represented:
+            continue
+        value, units = fields[key]
+        if value is not None:
+            represented.add(canonical)
+            yield key, value, units
+
+
+def _append_detail_table(lines: list, title: str, groups: list) -> None:
+    rows = []
+    for label, fields, consumed in groups:
+        for key, value, units in _detail_fields(fields, consumed):
+            cells = (label, key, _detail_value(value), units)
+            rows.append("| " + " | ".join(_markdown_cell(cell) for cell in cells) + " |")
+    if rows:
+        lines.extend([
+            f"## {title}", "| Élément | Champ FIT | Valeur | Unité |",
+            "|---|---|---|---|", *rows, "", "---", "",
+        ])
+
+
+def _append_record_summary(lines: list, records: list) -> None:
+    series = {}
+    for record in records:
+        for key, value, units in _detail_fields(record, set()):
+            if key in {"timestamp", "local_timestamp"} or key.startswith("position_"):
+                continue
+            if isinstance(value, (bool, date, datetime, time)) or units == "semicircles":
+                continue
+            if isinstance(value, (int, float)) and not _finite_number(value):
+                continue
+            series.setdefault((_canonical_field(key), units), []).append(value)
+    rows = []
+    for (key, units), values in sorted(series.items(), key=lambda item: (item[0][0], str(item[0][1]))):
+        count, minimum, maximum, mean = _numeric_summary(values)
+        cells = (key, units, len(values), count, minimum, maximum, mean)
+        rows.append("| " + " | ".join(_markdown_cell(cell) for cell in cells) + " |")
+    if rows:
+        lines.extend([
+            "## Synthèse des mesures enregistrées",
+            "Moyennes arithmétiques des échantillons valides, non pondérées par le temps. "
+            "Les valeurs textuelles ou structurées sont comptées sans être moyennées.",
+            "", "| Champ FIT | Unité | Présences | Numériques valides | Min | Max | Moyenne |",
+            "|---|---|---|---|---|---|---|", *rows, "", "---", "",
+        ])
+
+
 def format_markdown(
     data: dict,
     device: str,
     source_path: Path,
     include_gps: bool,
     gps_limit: int,
+    details: bool = False,
 ) -> str:
+    if isinstance(gps_limit, bool) or not isinstance(gps_limit, int) or gps_limit < 1:
+        raise ValueError("gps_limit doit être un entier strictement positif")
     session = data["session"]
     lines = []
+    session_consumed = set()
+    lap_groups = []
+    device_consumed = [set() for info in data["device_info"]]
 
     def sv(key):
         entry = session.get(key)
+        if entry and entry[0] is not None:
+            session_consumed.add(key)
         return entry[0] if entry and entry[0] is not None else None
 
     def sv_speed():
@@ -154,14 +267,17 @@ def format_markdown(
 
     product_name = "-"
     manufacturer_name = "-"
-    for info in data["device_info"]:
+    for device_index, info in enumerate(data["device_info"]):
         if manufacturer_name == "-" and "manufacturer" in info:
             manufacturer_name = str(info["manufacturer"][0])
+            device_consumed[device_index].add("manufacturer")
         if product_name == "-":
             if "product_name" in info:
                 product_name = str(info["product_name"][0])
+                device_consumed[device_index].add("product_name")
             elif "garmin_product" in info:
                 product_name = f"Garmin #{info['garmin_product'][0]}"
+                device_consumed[device_index].add("garmin_product")
         if product_name != "-" and manufacturer_name != "-":
             break
 
@@ -383,8 +499,12 @@ def format_markdown(
         lines.append("|---|----------|-------|--------|--------|---------|-----------|-------|")
 
         for i, lap in enumerate(data["laps"], 1):
+            lap_consumed = set()
+            lap_groups.append((f"Tour {i}", lap, lap_consumed))
             def lv(key, _lap=lap):
                 entry = _lap.get(key)
+                if entry and entry[0] is not None:
+                    lap_consumed.add(key)
                 return entry[0] if entry and entry[0] is not None else None
 
             dist_l = lv("total_distance")
@@ -458,6 +578,17 @@ def format_markdown(
             lines.append("---")
             lines.append("")
 
+    if details:
+        _append_detail_table(lines, "Champs complémentaires de séance", [
+            ("Séance", session, session_consumed),
+        ])
+        _append_detail_table(lines, "Champs complémentaires par tour", lap_groups)
+        _append_detail_table(lines, "Informations complémentaires du matériel", [
+            (f"Appareil {device_index + 1}", info, device_consumed[device_index])
+            for device_index, info in enumerate(data["device_info"])
+        ])
+        _append_record_summary(lines, data["records"])
+
     # --- Footer ---
     lines.append(
         f"*Généré depuis `{source_path.name}` — {len(data['records'])} points GPS — {product_name}*"
@@ -479,18 +610,20 @@ def main():
         help="Chemin du .md de sortie (sinon export/YYYY-MM-DD_<activité>_<indice>.md)"
     )
     parser.add_argument("--stdout", action="store_true", help="Afficher dans le terminal")
+    parser.add_argument(
+        "--details", action="store_true",
+        help="Ajouter les champs complémentaires et les synthèses des mesures"
+    )
     parser.add_argument("--gps", action="store_true", help="Inclure les points GPS échantillonnés")
     parser.add_argument(
-        "--gps-limit", type=int, default=30, metavar="N",
+        "--gps-limit", type=_positive_int, default=30, metavar="N",
         help="Nombre max de points GPS (défaut : 30)"
     )
     parser.add_argument(
         "--force", action="store_true",
-        help="Avec --output, autorise l'écrasement du .md existant"
+        help="Avec --output, autorise le remplacement du .md et du .gpx associés"
     )
     args = parser.parse_args()
-
-    ensure_workdirs()
 
     input_path = resolve_input_path(args.input)
     if not input_path.exists():
@@ -507,50 +640,31 @@ def main():
         print(f"Erreur lors du parsing FIT : {e}", file=sys.stderr)
         sys.exit(1)
 
-    device = detect_device(data)
-    markdown = format_markdown(data, device, input_path, args.gps, args.gps_limit)
+    try:
+        device = detect_device(data)
+        markdown = format_markdown(
+            data, device, input_path, args.gps, args.gps_limit, args.details
+        )
+        if args.stdout:
+            print(markdown)
+            return
+        if args.output:
+            md_path = args.output
+        else:
+            md_path, _basename = plan_output_paths(data["session"], input_path)
+        gps_points = extract_gps_points(data["records"])
+        gpx_content = build_gpx(gps_points, md_path.stem) if has_gps_points(gps_points) else None
+        ensure_workdirs()
+        final_fit = export_activity(input_path, md_path, markdown, gpx_content, args.force)
+    except Exception as error:
+        print(f"Erreur lors de l’export : {error}", file=sys.stderr)
+        sys.exit(1)
 
-    if args.stdout:
-        print(markdown)
-        return
-
-    if args.output:
-        md_path = args.output
-        if md_path.exists() and not args.force:
-            print(f"Erreur : le fichier de sortie existe déjà : {md_path}", file=sys.stderr)
-            print("Utilisez --force pour l'écraser.", file=sys.stderr)
-            sys.exit(1)
-    else:
-        md_path, _basename = plan_output_paths(data["session"], input_path)
-
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.write_text(markdown, encoding="utf-8")
     print(f"Markdown généré : {md_path}", file=sys.stderr)
-
-    gps_points = extract_gps_points(data["records"])
-    if has_gps_points(gps_points):
-        gpx_path = md_path.with_suffix(".gpx")
-        gpx_content = build_gpx(gps_points, md_path.stem)
-        try:
-            write_gpx_file(gpx_content, gpx_path, force=args.force)
-        except FileExistsError:
-            print(f"Erreur : le fichier GPX existe déjà : {gpx_path}", file=sys.stderr)
-            print("Utilisez --force pour l'écraser.", file=sys.stderr)
-            sys.exit(1)
-        print(f"GPX généré : {gpx_path} ({len(gps_points)} points)", file=sys.stderr)
+    if gpx_content is not None:
+        print(f"GPX généré : {md_path.with_suffix('.gpx')} ({len(gps_points)} points)", file=sys.stderr)
     else:
         print("Aucun point GPS exploitable trouvé : GPX non généré.", file=sys.stderr)
-
-    try:
-        final_fit = move_processed_fit(input_path, md_path)
-    except OSError as e:
-        print(
-            f"Attention : impossible de déplacer le fichier source ({e}). "
-            f"Le .md a bien été écrit, le .fit reste à {input_path}.",
-            file=sys.stderr,
-        )
-        return
-
     print(f"Archive FIT : {final_fit}", file=sys.stderr)
 
 

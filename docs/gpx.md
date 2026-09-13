@@ -1,5 +1,21 @@
 # Spec fonctionnelle d'évolution — Export GPX depuis les points GPS FIT
 
+> **Document historique** : les propositions et critères ci-dessous décrivent
+> la conception initiale de mai 2026. Le contrat courant est dans [SPEC.md](SPEC.md).
+
+## Décisions livrées et actualisation du 2026-09-13
+
+- Le XML est construit dans `gpx_exporter.py` ; la CLI publie Markdown, GPX et
+  archive via `file_manager.export_activity()`, avec restauration sur erreur gérée.
+- `--output` archive la source à côté des exports. `--force` ne remplace jamais
+  une archive FIT : un suffixe `_dupN` résout les collisions.
+- Avec `--output --force`, un ancien GPX est retiré si l’activité n’a pas de GPS ;
+  il est restauré si le traitement échoue avant validation.
+- `--gps-limit` doit être strictement positif ; il ne limite que le Markdown.
+  `--details` ajoute des synthèses dans le Markdown sans enrichir le GPX.
+- `--stdout` ne crée ni dossier ni fichier et ne déplace rien.
+- Aucun dossier `examples/` ni jeu de FIT de test n’est fourni.
+
 ## 0. Identification
 
 | Champ | Valeur |

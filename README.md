@@ -62,10 +62,18 @@ Après traitement d'un fichier `.fit` :
 
 1. le `.md` est généré dans `export/` ;
 2. un `.gpx` (trace GPS complète, GPX 1.1) est généré dans `export/` si le FIT contient des points GPS exploitables ;
-3. le `.fit` source est déplacé dans `export/` — uniquement après écriture réussie du `.md` ;
-4. les trois fichiers partagent le même basename `YYYY-MM-DD_<activité>_<indice>`.
+3. le `.fit` source est archivé dans `export/`, puis supprimé de son emplacement initial uniquement après publication réussie de toutes les sorties ;
+4. les trois fichiers partagent le basename `YYYY-MM-DD_<activité>_<indice>`, sauf suffixe `_dupN` sur une archive en conflit.
 
 Une activité sans GPS (intérieur, home trainer) ne produit que le `.md` ; un message explicite l'indique. Les fichiers `.fit.gz` sont décompressés **en mémoire uniquement** (jamais sur disque) et conservent leur extension `.fit.gz` à l'archivage.
+
+Les contenus sont préparés avant publication. En cas d’erreur d’écriture ou d’archivage,
+les nouveaux fichiers sont retirés et les sorties remplacées sont restaurées ; la source
+reste à sa place. Si la restauration échoue elle-même, le message indique les fichiers
+concernés et le dossier `.fit-export-*` contenant les sauvegardes à récupérer.
+Les dossiers créés peuvent rester présents après un échec. Cette protection concerne
+les erreurs gérées pendant une exécution isolée, pas une coupure électrique, un arrêt
+forcé ou des conversions concurrentes vers les mêmes destinations.
 
 ## Utilisation
 
@@ -73,19 +81,28 @@ Une activité sans GPS (intérieur, home trainer) ne produit que le `.md` ; un m
 python3 extractor.py <fichier.fit> [options]
 ```
 
-Un nom seul est résolu depuis `import/` : `python3 extractor.py Trail_le_matin.fit` cherche `import/Trail_le_matin.fit`. Un chemin explicite (`./ailleurs/course.fit`) est utilisé tel quel.
+Un nom seul est recherché d’abord tel quel, puis dans `import/`. Un chemin explicite (`./ailleurs/course.fit`) est utilisé tel quel.
 
 ### Options
 
 | Option | Effet |
 |--------|-------|
 | `--output PATH` | Chemin du `.md` de sortie (court-circuite le nommage auto ; `.gpx` et `.fit` sont déposés à côté avec le même basename) |
-| `--stdout` | Affiche le Markdown dans le terminal ; **aucun fichier écrit, ni `.gpx` ni déplacement du `.fit`** |
+| `--stdout` | Affiche le Markdown ; **aucun export, déplacement ni création de dossier** |
+| `--details` | Ajoute les champs complémentaires et les synthèses des mesures enregistrées |
 | `--gps` | Ajoute une section GPS échantillonnée dans le Markdown (n'affecte pas le `.gpx`) |
-| `--gps-limit N` | Nombre max de points GPS dans le Markdown (défaut : 30). Le `.gpx` contient toujours la trace complète. |
+| `--gps-limit N` | Entier strictement positif, défaut : 30. Limite seulement les points GPS du Markdown. |
 | `--force` | Avec `--output`, autorise l'écrasement du `.md` et du `.gpx` cibles |
 
 En mode auto (sans `--output`), l'indice s'incrémente automatiquement si un fichier (`.md`, `.fit`, `.fit.gz` ou `.gpx`) existe déjà avec la même date et le même type d'activité : pas besoin de `--force`.
+
+Avec `--output --force`, un ancien GPX associé est retiré si la nouvelle activité
+n’a pas de GPS. Une archive existante n’est jamais écrasée : la nouvelle reçoit
+`_dupN`. Une source déjà à sa destination d’archive reste en place. Les sorties qui
+désignent la source, se confondent entre elles ou sont des liens symboliques sont refusées.
+
+Codes de sortie : **0** succès, **1** erreur de lecture, rendu ou export, **2** arguments
+invalides. `--gps-limit 0` est refusé même sans `--gps`, avant toute lecture du FIT.
 
 ### Exemples
 
@@ -99,6 +116,9 @@ python3 extractor.py Trail_le_matin.fit --stdout | pbcopy                       
 
 # Avec points GPS dans le Markdown (jusqu'à 50)
 python3 extractor.py Trail_le_matin.fit --gps --gps-limit 50
+
+# Champs complémentaires et synthèses, sans export ni cache Python
+python3 -B extractor.py Trail_le_matin.fit --stdout --details
 
 # Chemin de sortie personnalisé : le .md va à l'emplacement demandé,
 # et le .fit est déplacé à côté avec le même basename
@@ -155,6 +175,20 @@ Les sections n'apparaissent que si les données correspondantes existent dans le
 
 Tous les labels sont en français.
 
+### Mode détaillé
+
+`--details` conserve le résumé habituel et ajoute, si disponibles, les champs de
+séance et de tours non déjà affichés, les informations complémentaires du matériel,
+et une synthèse des séries de mesures (puissance, cadence, métriques Suunto, etc.).
+Les tableaux indiquent le nom technique FIT et l’unité renvoyée par le parsing.
+
+Les séries numériques sont résumées par effectif, minimum, maximum et moyenne
+arithmétique des échantillons valides, **non pondérée par le temps**. Les valeurs
+textuelles ou structurées sont seulement comptées. Booléens, valeurs non finies,
+coordonnées, horodatages et RR bruts sont exclus de ces synthèses. Les listes de
+plus de 16 éléments dans les champs complémentaires sont résumées, pas déroulées.
+Les variantes standard/enhanced ne sont pas répétées.
+
 ### Compatibilité matérielle
 
 | Section | Suunto Spartan Ultra | Garmin Edge |
@@ -166,7 +200,11 @@ Tous les labels sont en français.
 | Zones cibles (FTP, seuil FC) | — | ✓ |
 | VAM | — | ✓ |
 
-L'extraction est **générique** : elle itère sur tous les champs de chaque message FIT plutôt que sur une liste figée. D'autres montres et compteurs produisent donc une sortie exploitable, même si les sections spécifiques ci-dessus ne s'activent pas.
+L'extraction des champs est **générique dans les types de messages traités** :
+`session`, `lap`, `record`, `hrv`, `device_info`, `user_profile`, `zones_target`.
+Le rendu standard sélectionne les métriques affichées ; `--details` complète cette
+restitution sans exporter toutes les données brutes. La compatibilité avec d’autres
+matériels dépend des messages disponibles et du support de `fitparse`.
 
 ## Architecture
 
@@ -186,6 +224,7 @@ Trois modules, sans framework :
 | [`docs/file_manager_change.md`](docs/file_manager_change.md) | Spec de l'évolution « dossiers `import/` → `export/` » |
 | [`docs/gpx.md`](docs/gpx.md) | Spec de l'évolution « export GPX » |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Comment contribuer, invariants à respecter |
+| [`AGENTS.md`](AGENTS.md) | Instructions et référence pour Codex |
 | [`CLAUDE.md`](CLAUDE.md) | Contexte destiné aux assistants de code (Claude Code) |
 
 ## Vie privée

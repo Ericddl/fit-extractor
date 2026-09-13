@@ -1,5 +1,23 @@
 # Spec fonctionnelle d'évolution — Gestion des dossiers import/export
 
+> **Document historique** : les sections ci-dessous conservent les propositions
+> initiales de mai 2026, pas le contrat courant. La référence actuelle est
+> [SPEC.md](SPEC.md), complétée par le README et le code.
+
+## Décisions livrées et actualisation du 2026-09-13
+
+- Le découpage en `file_manager.py` est réalisé ; les signatures proposées plus
+  bas ne constituent pas une API à implémenter telle quelle.
+- `--output` archive bien la source à côté du Markdown ; il ne désactive pas le déplacement.
+- `--force` remplace les sorties Markdown/GPX, jamais une archive existante :
+  le FIT reçoit `_dupN` en cas de collision. Une source déjà archivée reste en place.
+- L’indice automatique tient aussi compte des `.gpx`.
+- `export_activity()` prépare les fichiers et une copie exacte de la source,
+  publie les sorties, puis supprime la source en dernier. Une erreur gérée annule
+  le lot, archivage compris ; les sauvegardes sont conservées si la restauration échoue.
+- `--stdout` ne crée aucun dossier. Aucun dossier `examples/` n’est fourni.
+- Les garanties concernent une exécution isolée, sans reprise après arrêt brutal.
+
 ## 0. Identification
 
 | Champ | Valeur |

@@ -8,8 +8,11 @@ Workflow :
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import sys
+import tempfile
 import unicodedata
 from datetime import date, datetime
 from pathlib import Path
@@ -137,25 +140,128 @@ def _source_fit_extension(source: Path) -> str:
     return ".fit"
 
 
-def move_processed_fit(source: Path, md_target: Path) -> Path:
-    """Déplace `source` à côté du .md cible avec le même basename, en préservant .fit / .fit.gz.
+def _same_file(first: Path, second: Path) -> bool:
+    return first.resolve() == second.resolve() or (
+        first.exists() and second.exists() and first.samefile(second)
+    )
 
-    Garde-fou anti-race : si la destination existe déjà, suffixe `_dupN` avant l'extension.
-    """
+
+def plan_archive_path(source: Path, md_target: Path) -> Path:
     extension = _source_fit_extension(source)
     target_dir = md_target.parent
-    target_dir.mkdir(parents=True, exist_ok=True)
     base = md_target.stem
     destination = target_dir / f"{base}{extension}"
 
-    if destination.exists():
-        n = 1
+    if _same_file(source, destination):
+        return destination
+    if destination.exists() or destination.is_symlink():
+        duplicate_index = 1
         while True:
-            candidate = target_dir / f"{base}_dup{n}{extension}"
-            if not candidate.exists():
+            candidate = target_dir / f"{base}_dup{duplicate_index}{extension}"
+            if not candidate.exists() and not candidate.is_symlink():
                 destination = candidate
                 break
-            n += 1
+            duplicate_index += 1
+    return destination
 
+
+def move_processed_fit(source: Path, md_target: Path) -> Path:
+    """Archive une source seule ; la CLI utilise export_activity pour le lot complet."""
+    destination = plan_archive_path(source, md_target)
+    if _same_file(source, destination):
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(source), str(destination))
     return destination
+
+
+def export_activity(
+    source: Path,
+    md_target: Path,
+    markdown: str,
+    gpx_content: str | None,
+    force: bool = False,
+) -> Path:
+    """Publie les exports et archive la source, avec restauration sur erreur gérée.
+
+    Une seule exécution par destination ; aucune garantie après un arrêt brutal.
+    Les sauvegardes sont conservées si la restauration échoue elle-même.
+    """
+    gpx_content = gpx_content or None
+    gpx_target = md_target.with_suffix(".gpx")
+    archive_target = plan_archive_path(source, md_target)
+    targets = [md_target, gpx_target, archive_target]
+    for target_index, target in enumerate(targets):
+        if target.is_symlink():
+            raise ValueError(f"Destination symbolique refusée : {target}")
+        if target.exists() and not target.is_file():
+            raise ValueError(f"La destination n’est pas un fichier : {target}")
+        if any(_same_file(target, other) for other in targets[:target_index]):
+            raise ValueError(f"Destinations confondues : {target}")
+    for target in (md_target, gpx_target):
+        if _same_file(source, target):
+            raise ValueError(f"La sortie désigne la source : {target}")
+        if target.exists() and not force:
+            raise FileExistsError(f"La sortie existe déjà : {target} ; utilisez --force.")
+
+    archive_in_place = _same_file(source, archive_target)
+    md_target.parent.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(tempfile.mkdtemp(prefix=".fit-export-", dir=md_target.parent))
+    backups = {}
+    prepared = {}
+    changed = []
+    keep_backups = False
+    try:
+        for target, content in ((md_target, markdown), (gpx_target, gpx_content)):
+            if content is not None:
+                staged = staging_dir / f"new-{len(prepared)}"
+                staged.write_text(content, encoding="utf-8")
+                prepared[target] = staged
+            if target.exists():
+                backup = staging_dir / f"backup-{target.name}"
+                shutil.copy2(target, backup)
+                backups[target] = backup
+        if not archive_in_place:
+            staged_archive = staging_dir / "source-archive"
+            shutil.copy2(source, staged_archive)
+            prepared[archive_target] = staged_archive
+
+        for target, staged in prepared.items():
+            if force and target != archive_target:
+                os.replace(staged, target)
+            else:
+                os.link(staged, target)
+            changed.append(target)
+        if gpx_content is None and gpx_target in backups:
+            gpx_target.unlink()
+            changed.append(gpx_target)
+        if not archive_in_place:
+            source.unlink()
+    except Exception as error:
+        restoration_errors = []
+        for target in reversed(changed):
+            try:
+                if target in backups:
+                    os.replace(backups[target], target)
+                else:
+                    target.unlink()
+            except OSError as restoration_error:
+                restoration_errors.append(f"{target} : {restoration_error}")
+        if restoration_errors:
+            keep_backups = True
+            raise OSError(
+                f"Échec de l’export ({error}). Restauration incomplète : "
+                + "; ".join(restoration_errors)
+                + f". Fichiers de récupération conservés dans {staging_dir.resolve()}"
+            ) from error
+        raise
+    finally:
+        if not keep_backups:
+            try:
+                shutil.rmtree(staging_dir)
+            except OSError as cleanup_error:
+                print(
+                    f"Attention : nettoyage impossible dans {staging_dir.resolve()} : "
+                    f"{cleanup_error}", file=sys.stderr,
+                )
+    return archive_target

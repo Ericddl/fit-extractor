@@ -21,16 +21,34 @@ Ouvrez une [issue](https://github.com/Ericddl/fit-extractor/issues) en précisan
 Aucune suite de tests automatisés n'existe à ce jour. La vérification manuelle minimale :
 
 ```bash
-python3 extractor.py mon_activite.fit --stdout   # n'écrit aucun fichier
+python3 -B extractor.py --help
+python3 -B extractor.py mon_activite.fit --stdout
+python3 -B extractor.py mon_activite.fit --stdout --details --gps --gps-limit 30
 ```
+
+`--stdout` ne crée ni export ni dossier et ne déplace pas la source ; `-B` évite
+les caches Python. Aucun dossier `examples/` ni jeu de FIT de test n’est versionné.
+L’aide CLI seule ne valide pas une conversion.
+
+Pour vérifier les écritures, utiliser des données synthétiques ou des copies dans
+des dossiers temporaires. Contrôler `.fit` et `.fit.gz`, avec et sans GPS, les
+collisions, `--force` et la suppression d’un ancien GPX devenu sans objet.
+Simuler les erreurs de préparation, publication et suppression de la source :
+les octets de la source et des anciennes sorties doivent rester identiques après
+restauration. Vérifier aussi la conservation des sauvegardes si celle-ci échoue.
+Les contrôles ponctuels peuvent utiliser `unittest.mock` et `tempfile` de la stdlib.
+
+Vérifier les limites GPS invalides (code 2, avant parsing), les échecs d’export
+(code 1), l’absence de doublons en mode détaillé et la stabilité du rendu standard.
+Documenter les commandes exécutées et ce qui n’a pas pu être vérifié.
 
 ## Invariants à respecter
 
 Ces règles portent la conception du projet — une PR qui les enfreint sera refusée, sauf discussion préalable en issue :
 
 - **Une seule dépendance** : `fitparse`. Le GPX est généré avec `xml.etree.ElementTree` de la stdlib — pas de `gpxpy` ni d'équivalent.
-- **Extraction générique** : itérer sur tous les champs d'un message FIT, jamais sur une liste de noms figée (compatibilité avec les futurs matériels).
-- **Toujours passer `StandardUnitsDataProcessor()`** à fitparse (km/h, mètres).
+- **Extraction générique** : itérer sur les champs des types de messages traités ; le rendu standard sélectionne les métriques, `--details` le complète.
+- **Toujours passer `StandardUnitsDataProcessor()`** à fitparse et respecter les unités par champ (`distance` en km, `total_distance` en m, vitesses en km/h).
 - **Ignorer les champs `unknown_XXX`** : propriétaires, non documentés, bruit pour une IA.
 - **HRV : RMSSD et SDNN uniquement** — jamais les intervalles RR bruts, qui dépassent 10 000 points.
 - **`None` → `"-"`** : une donnée manquante ne doit jamais faire échouer le rendu.
@@ -38,7 +56,8 @@ Ces règles portent la conception du projet — une PR qui les enfreint sera ref
 - **Ne jamais écraser un fichier existant** sans `--force`.
 - **Tous les labels de sortie en français.**
 - **Séparation des modules** : chemins / nommage / archivage dans `file_manager.py`, GPS / GPX dans `gpx_exporter.py`, parsing + formatage + CLI dans `extractor.py`.
-- **Le `.fit` source n'est déplacé qu'après écriture réussie du `.md`.**
+- **Publier et archiver via `export_activity()`** : annuler les sorties et restaurer les anciennes en cas d’erreur gérée, archivage compris. Ne supprimer la source qu’en dernier.
+- **`--details` reste optionnel** : pas de RR bruts ni de séries intégrales ; moyennes d’échantillons explicitement non pondérées.
 
 La liste complète et son rationale sont dans [`docs/SPEC.md`](docs/SPEC.md) et [`CLAUDE.md`](CLAUDE.md).
 

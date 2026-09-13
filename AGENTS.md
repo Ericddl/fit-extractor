@@ -21,8 +21,9 @@ Le traitement est local, sans appel réseau ni API d’IA.
 - Python 3.10+ ; seule dépendance externe : `fitparse>=1.2.0` dans `requirements.txt`.
   Privilégier la bibliothèque standard ; justifier toute nouvelle dépendance.
 
-Flux : lecture → décompression en mémoire → parsing → Markdown → GPX éventuel
-→ déplacement du FIT source. Les dossiers `import/` et `export/` sont ancrés à
+Flux : lecture → décompression en mémoire → parsing → rendu Markdown/GPX en mémoire
+→ préparation des fichiers → publication et archivage avec restauration sur erreur.
+Les dossiers `import/` et `export/` sont ancrés à
 la racine du projet, indépendamment du répertoire courant.
 Nommage automatique : `YYYY-MM-DD_<activité>_<indice>`, avec indice incrémenté
 en tenant compte des fichiers `.md`, `.fit`, `.fit.gz` et `.gpx` existants.
@@ -36,30 +37,37 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -B extractor.py --help
 .venv/bin/python -B extractor.py mon_activite.fit --stdout
+.venv/bin/python -B extractor.py mon_activite.fit --stdout --details
 .venv/bin/python -B extractor.py mon_activite.fit --stdout --gps --gps-limit 30
 .venv/bin/python extractor.py mon_activite.fit
 ```
 
 - Un nom seul est recherché d’abord tel quel, puis dans `import/`.
 - La conversion normale écrit dans `export/` et **déplace la source**.
-- `--stdout` ne génère pas d’export et ne déplace rien, mais peut créer les
-  dossiers `import/` et `export/`. `-B` évite les caches Python.
+- `--stdout` ne génère pas d’export, ne déplace rien et ne crée aucun dossier.
+  `-B` évite les caches Python.
+- `--details` ajoute les champs complémentaires et les synthèses de séries,
+  sans RR bruts ; les moyennes d’échantillons ne sont pas pondérées par le temps.
 - `--output chemin/seance.md` place aussi le GPX et la source archivée à côté.
 - `--force` permet d’écraser le Markdown et le GPX. Une collision d’archive FIT
   entraîne un suffixe `_dupN`, pas un écrasement.
+- Avec `--output --force`, retirer l’ancien GPX si l’activité n’a plus de GPS.
 - `--gps` et `--gps-limit` concernent seulement le Markdown ; le GPX conserve
-  toute la trace exploitable. Utiliser une limite strictement positive.
+  toute la trace exploitable. Une limite non positive est refusée avant parsing.
+- Codes de sortie : 0 succès, 1 erreur de traitement, 2 arguments invalides.
 
 ## Validation
 
 Aucune suite de tests automatisés, CI ou configuration de lint n’est présente.
-Le dossier `examples/` évoqué dans la spécification n’existe pas dans le dépôt.
+Il n’y a ni dossier `examples/` ni jeu de FIT de test versionné.
 
 - Vérifier l’aide CLI et le rendu `--stdout` sur un FIT approprié si disponible.
 - Pour une évolution fonctionnelle, vérifier si possible Suunto et Garmin,
   une activité avec GPS et une sans GPS, ainsi que `.fit.gz` si concerné.
 - Tester les écritures, collisions et déplacements uniquement sur des copies
   de données dans un emplacement de test ; `--stdout` ne valide pas ces étapes.
+- Simuler les erreurs d’écriture et d’archivage avec `unittest.mock` et `tempfile` ;
+  vérifier la restauration octet pour octet et la stabilité du rendu sans `--details`.
 - Indiquer les commandes exécutées et les limites de validation ; ne pas
   présenter l’affichage de l’aide comme un test complet de conversion.
 
@@ -77,9 +85,10 @@ Le dossier `examples/` évoqué dans la spécification n’existe pas dans le d�
 - HRV : rendre RMSSD et SDNN, jamais les intervalles RR bruts.
 - Décompresser uniquement en mémoire ; préserver l’extension composée `.fit.gz`
   à l’archivage (`name.lower().endswith(".fit.gz")`).
-- Ne déplacer la source qu’après succès des écritures précédentes ; préserver
-  les protections contre l’écrasement. Les sorties ne sont pas transactionnelles :
-  un échec GPX peut laisser un Markdown déjà écrit.
+- Utiliser `export_activity()` pour le lot Markdown/GPX/archive ; supprimer la
+  source en dernier et restaurer les sorties sur erreur gérée. Conserver les
+  sauvegardes et signaler leurs chemins si la restauration échoue elle-même.
+  Cette protection ne couvre ni arrêt brutal ni écritures concurrentes.
 - GPX : latitude/longitude valides, altitude et heure si disponibles ; pas
   d’extensions FC, cadence ou puissance, ni de fichier sans points exploitables.
 - Ne jamais versionner les données sportives personnelles. `import/`, `export/`

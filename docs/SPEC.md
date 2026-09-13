@@ -12,7 +12,7 @@
 |-------|--------|
 | Phase | v1 — file_manager & export GPX fusionnés dans `main` |
 | Branche de référence | `main` |
-| Dernière mise à jour | 2026-05-14 |
+| Dernière mise à jour | 2026-09-13 |
 | Prochaine action | Étendre la couverture matérielle au-delà de Suunto Spartan Ultra / Garmin Edge |
 
 ---
@@ -22,7 +22,7 @@
 **Project name** : `fit-extractor`
 **Objective** : Extraire les données d'un fichier `.fit` (montre ou GPS vélo) et les convertir en Markdown structuré, **optimisé pour être envoyé à une IA (ChatGPT, Claude) pour du coaching sportif assisté**.
 **Main stack** : Python 3.10+, `fitparse`, stdlib uniquement
-**Last update** : 2026-05-13
+**Last update** : 2026-09-13
 
 ### High-level behavior
 - **Inputs** : un fichier `.fit` (ou `.fit.gz`) — Suunto Spartan Ultra (running/trail) ou GPS Garmin Edge (vélo)
@@ -57,13 +57,15 @@ fit-extractor/
 ├── README.md             # Usage rapide
 ├── import/               # Fichiers .fit / .fit.gz à traiter (créé automatiquement)
 │   └── .gitkeep
-├── export/               # .md générés + .fit archivés (créé automatiquement)
-│   └── .gitkeep
-└── examples/
-    ├── trail.fit         # Fichier de test Suunto running/trail
-    ├── velo.fit          # Fichier de test Garmin vélo
-    └── course.fit        # Fichier de test Suunto course à pied
+├── AGENTS.md             # Instructions Codex
+├── CLAUDE.md             # Instructions Claude Code
+├── CONTRIBUTING.md       # Contribution et validation manuelle
+└── export/               # .md/.gpx générés + .fit archivés
+    └── .gitkeep
 ```
+
+Aucun dossier `examples/` ni jeu de FIT de test n’est versionné.
+Les dossiers de travail ne sont pas créés avec `--stdout` ou des arguments invalides.
 
 ### Data flow
 ```
@@ -71,18 +73,17 @@ import/fichier.fit (.gz)
   → résolution du chemin (depuis import/ si nom nu)
   → décompression en mémoire si .gz (gzip stdlib)
   → parsing FitFile (fitparse + StandardUnitsDataProcessor)
-  → extraction générique de TOUS les messages connus
+  → extraction générique des champs des types de messages sélectionnés
       session / lap / record / hrv / device_info /
-      user_profile / zones_target / developer_fields
+      user_profile / zones_target (champs développeur inclus dans ces messages)
   → détection du profil matériel (Suunto vs Garmin vs autre)
   → planification du basename normalisé
       YYYY-MM-DD_<activité>_<indice>
-  → formatage Markdown conditionnel par sections
-  → écriture export/<basename>.md
-  → extraction des points GPS exploitables depuis les records
-  → si points GPS présents : écriture export/<basename>.gpx (GPX 1.1)
-  → déplacement de la source .fit / .fit.gz vers export/<basename>.<ext>
-      (uniquement après succès de l'écriture .md)
+  → formatage Markdown conditionnel, compléments optionnels avec --details
+  → extraction GPS et construction du GPX éventuel en mémoire
+  → préparation des fichiers temporaires et copie exacte de la source
+  → sauvegarde des anciennes sorties puis publication Markdown/GPX/archive
+  → suppression de la source en dernier ; restauration des sorties sur erreur gérée
 ```
 
 ---
@@ -95,11 +96,11 @@ import/fichier.fit (.gz)
 - **Files** : `extractor.py`
 - **Public interface** :
   ```
-  python extractor.py <input.fit> [--output chemin/sortie.md] [--gps] [--gps-limit N] [--stdout] [--force]
+  python extractor.py <input.fit> [--output chemin/sortie.md] [--gps] [--gps-limit N] [--stdout] [--details] [--force]
   ```
 - **Dependencies** : `fitparse`, `gzip`, `pathlib`, `argparse`, `math`, `file_manager`
 - **Side effects** :
-  - crée les dossiers `import/` et `export/` s'ils n'existent pas
+  - crée les dossiers `import/` et `export/` pour un export fichier, pas avec `--stdout`
   - écrit le `.md` dans `export/` (ou à l'emplacement `--output`, ou stdout)
   - déplace le `.fit` source vers `export/` après succès (sauf `--stdout`)
 
@@ -116,7 +117,7 @@ import/fichier.fit (.gz)
   write_gpx_file(gpx_content: str, output_path: Path, force: bool = False) -> None
   ```
 - **Dependencies** : `xml.etree.ElementTree`, `datetime`, `pathlib` (stdlib uniquement)
-- **Side effects** : `write_gpx_file` écrit le `.gpx` dans `export/` (ou à côté de `--output`)
+- **Side effects** : `write_gpx_file` reste un utilitaire d’écriture isolée ; la CLI utilise `export_activity()` pour publier le lot complet.
 
 ### `file_manager.py`
 
@@ -132,12 +133,16 @@ import/fichier.fit (.gz)
   next_available_index(directory, date_str, activity) -> int
   build_activity_basename(date, activity, index) -> str
   plan_output_paths(session, fallback_source) -> tuple[Path, str]
+  plan_archive_path(source: Path, md_target: Path) -> Path
+  export_activity(source: Path, md_target: Path, markdown: str,
+                  gpx_content: str | None, force: bool = False) -> Path
   move_processed_fit(source: Path, md_target: Path) -> Path
   ```
-- **Dependencies** : `pathlib`, `shutil`, `unicodedata`, `re`, `datetime` (stdlib uniquement)
+- **Dependencies** : `pathlib`, `shutil`, `unicodedata`, `re`, `datetime`, `os`, `sys`, `tempfile` (stdlib uniquement)
 - **Side effects** :
   - `ensure_workdirs` : crée `import/` et `export/` si absents
-  - `move_processed_fit` : déplace le fichier source via `shutil.move`
+  - `export_activity` : prépare, publie et archive avec restauration sur erreur gérée
+  - `move_processed_fit` : utilitaire d’archivage isolé, non utilisé par la CLI
 
 ---
 
@@ -145,7 +150,7 @@ import/fichier.fit (.gz)
 
 ### Règles de parsing
 
-- **`StandardUnitsDataProcessor()`** : à toujours passer à `FitFile()`. Convertit vitesses en km/h, distances en mètres, altitudes en mètres. **Obligatoire, ne jamais retirer.**
+- **`StandardUnitsDataProcessor()`** : obligatoire. Vitesses en km/h, coordonnées en degrés ; respecter les unités par champ : `distance` en km, `total_distance` en m, altitudes en m.
 - **Semicircles → degrés** : avec `StandardUnitsDataProcessor`, la conversion des coordonnées GPS est automatique — ne pas la refaire manuellement.
 - **Fichiers `.fit.gz`** : décompresser en mémoire (module `gzip`) avant parsing. Ne jamais écrire de `.fit` intermédiaire sur le disque.
 - **Champs `None`** : très fréquents selon le matériel. Toujours tester `is not None`. Fallback `"-"` systématique dans le Markdown.
@@ -153,7 +158,10 @@ import/fichier.fit (.gz)
 
 ### Extraction générique (pas de liste figée de champs)
 
-Le script doit itérer sur **tous les champs présents** dans chaque message, pas sur une liste codée en dur. Cela garantit la compatibilité avec tout matériel futur.
+Le script itère sur **tous les champs présents dans les types de messages traités**,
+pas sur une liste figée de champs. La compatibilité dépend de `fitparse` et des
+messages disponibles ; il ne s’agit pas d’un export exhaustif du format FIT.
+Le rendu standard sélectionne les métriques, et `--details` ajoute des compléments.
 
 ```python
 # Principe : extraction dynamique
@@ -180,7 +188,8 @@ Les developer fields sont des métriques propriétaires Suunto injectées dans l
 | `time_in_vo2max_zone` | Temps en zone VO2max (s) | Trail + Course |
 | `feeling` | Ressenti subjectif post-activité (1-5) | Trail uniquement |
 
-Ces champs doivent être extraits et affichés dans une section dédiée "Métriques avancées".
+Les champs de séance reconnus alimentent "Métriques avancées". Les autres champs
+de séance et les séries de records comme `ddfa` sont restitués avec `--details`.
 
 ### HRV (Suunto uniquement)
 
@@ -201,14 +210,13 @@ def compute_hrv(rr_intervals):
 
 ### Détection du profil matériel
 
-Lire le champ `manufacturer` du premier message `device_info` :
-- `"suunto"` → activer sections HRV + developer fields Suunto
-- `"garmin"` → activer sections user_profile + zones_target
-- autre → extraction générique sans sections spécifiques
+Parcourir les messages `device_info` et reconnaître le premier fabricant Suunto
+ou Garmin rencontré. Les sections HRV, métriques avancées, profil et zones cibles
+sont conditionnées par la présence de leurs données, pas strictement par la marque.
 
 ### Calculs dérivés
 
-- **Durée** : `total_elapsed_time` (s) → `HH:MM:SS` via `timedelta`
+- **Durée** : `total_elapsed_time` (s) → `HH:MM:SS` via `divmod`
 - **Allure running** : `60 / avg_speed` (km/h) → `MM:SS /km`
 - **Temps de récupération** : `recovery_time` (s) → `Xh YYmin`
 - **Zones FC** : `time_in_hr_zone` est un tuple `(z1, z2, z3, z4, z5)` en secondes → formater chaque zone
@@ -218,10 +226,35 @@ Lire le champ `manufacturer` du premier message `device_info` :
 - **Résolution input** : un chemin absolu/relatif est utilisé tel quel ; un nom nu introuvable mais présent dans `import/` est résolu vers `import/<nom>`.
 - **Date de l'activité** : priorité `session.start_time` → `session.timestamp` → `session.date` → `date.today()`. Toujours formaté `YYYY-MM-DD`.
 - **Nom d'activité** : `sport` + `sub_sport` (si distinct, non générique) après sanitisation (NFD-strip accents, lowercase, `[a-z0-9_]` only). Fallback : nom du fichier source sanitisé, puis `activite`.
-- **Indice** : scan de `export/` pour les fichiers `^{date}_{activity}_(\d{3})\.(md|fit|fit\.gz)$` ; on prend `max+1`, formaté sur 3 chiffres. Auto-incrément, pas de `--force` nécessaire.
-- **Déplacement** : `shutil.move` de la source `.fit`/`.fit.gz` vers `export/<basename>.<ext>`. L'extension `.fit.gz` composée est détectée via `name.lower().endswith(".fit.gz")` (pas via `Path.suffix`). Garde-fou anti-race : suffixe `_dupN` si la destination existe déjà au moment du move.
-- **Échec d'écriture .md** : exception levée avant l'étape de déplacement → la source reste intacte dans `import/`.
-- **Échec de move** : warning stderr, le `.md` reste écrit dans `export/`, la source reste à sa place.
+- **Indice** : scan de `export/` pour les fichiers `^{date}_{activity}_(\d{3})\.(md|fit|fit\.gz|gpx)$` ; on prend `max+1`, formaté sur 3 chiffres. Auto-incrément, pas de `--force` nécessaire.
+- **Archive** : copie exacte `.fit`/`.fit.gz` vers `export/<basename>.<ext>`, puis suppression de la source en dernier. L’extension composée est préservée. Une collision reçoit `_dupN` ; une source déjà à destination reste en place.
+
+### Publication et restauration
+
+`export_activity()` coordonne Markdown, GPX éventuel et archive :
+
+1. Vérifier toutes les destinations avant écriture : refuser les collisions sans
+   `--force`, les sorties identiques ou alias de la source, les destinations
+   symboliques et les destinations qui ne sont pas des fichiers.
+2. Préparer les contenus et une copie exacte de la source dans `.fit-export-*`,
+   à côté des sorties, sur le même système de fichiers. Ne jamais décompresser
+   un `.fit.gz` sur disque. Sauvegarder les sorties existantes avec leurs noms
+   `backup-<nom du fichier>` avant remplacement.
+3. Publier les fichiers préparés. Avec `--force` et sans nouveau GPX, retirer
+   l’ancien GPX associé, qui fait lui aussi partie des fichiers à restaurer.
+4. Supprimer la source seulement après publication complète. Les messages de
+   succès sont émis après cette étape.
+5. Sur erreur gérée, retirer les nouveaux fichiers et restaurer les anciennes
+   sorties ; retourner le code 1. La source n’a pas encore été supprimée.
+
+Si la restauration échoue elle-même, conserver le dossier temporaire et indiquer
+son chemin absolu ainsi que les destinations concernées. Un échec de nettoyage
+après validation produit un avertissement avec le chemin à nettoyer, sans annuler
+un export réussi. Les dossiers créés peuvent rester présents après une erreur.
+
+Cette garantie concerne une exécution isolée : ni journal de reprise après arrêt
+brutal, ni transaction durable face à une coupure électrique, ni coordination entre
+processus concurrents. `--stdout` ne déclenche aucune écriture ni création de dossier.
 
 ### Génération du GPX
 
@@ -253,13 +286,42 @@ Options :
                         export/YYYY-MM-DD_<activité>_<indice>.md
                         et le .fit source est déplacé dans export/ avec le même basename.
   --stdout              Afficher le Markdown dans le terminal.
-                        Aucun fichier écrit, le .fit n'est pas déplacé.
+                        Aucun export ni dossier créé, le .fit n'est pas déplacé.
+  --details             Ajouter les champs complémentaires et les synthèses de séries.
   --gps                 Inclure une section avec les points GPS échantillonnés
-  --gps-limit N         Nombre max de points GPS à inclure (défaut : 30)
+  --gps-limit N         Entier strictement positif, défaut 30 (même sans --gps).
   --force               Avec --output, autorise l'écrasement d'un .md existant.
                         Sans --output, inutile : l'indice s'auto-incrémente.
                         Couvre également l'écrasement du .gpx en mode --output.
+                        Retire l’ancien GPX si la nouvelle activité n’a pas de GPS.
+                        Ne remplace jamais une archive FIT (suffixe _dupN).
 ```
+
+Codes de sortie : 0 succès ; 1 erreur de lecture, rendu ou export ; 2 arguments
+invalides. Une limite GPS invalide est refusée avant lecture et création des dossiers.
+Les appels directs à `format_markdown()` avec une limite invalide lèvent `ValueError`.
+
+### Rendu détaillé optionnel
+
+`format_markdown(..., details=False)` conserve le rendu standard. `--details`
+ajoute quatre sections conditionnelles : champs complémentaires de séance, champs
+complémentaires par tour, informations du matériel et synthèse des mesures enregistrées.
+
+- Suivre les champs consommés par le rendu habituel et ne pas répéter leurs
+  variantes standard/enhanced ; les profils et zones cibles ont déjà un rendu générique.
+- Afficher les identifiants FIT et les unités du parsing dans des colonnes dédiées,
+  avec titres français et échappement des caractères perturbant les tableaux.
+- Afficher les scalaires et les listes jusqu’à 16 éléments. Résumer les listes
+  plus longues par taille et statistiques numériques si possible ; les données
+  binaires ou structurées sont décrites par leur taille, sans contenu brut.
+- Pour les records, regrouper les champs par nom canonique (sans `enhanced_`) et
+  unité ; ne pas mélanger des unités différentes. Restituer présences, effectif
+  numérique valide, minimum, maximum et moyenne arithmétique d’échantillons.
+- Ne pas pondérer la moyenne par le temps ni lui attribuer une signification
+  physiologique. Les valeurs textuelles et structurées sont seulement comptées.
+- Exclure des synthèses les booléens, valeurs non finies, coordonnées et horodatages.
+  Ne jamais rendre les RR bruts ni les champs `unknown_XXX`.
+- Ne pas ajouter de nouveaux types de messages FIT ni modifier le GPX avec `--details`.
 
 ### Comportement par défaut du GPX
 
@@ -394,9 +456,10 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | `input` | Chemin du `.fit` ou nom nu cherché dans `import/` | requis |
 | `--output` | Chemin de sortie du `.md` ; `.fit` déplacé à côté avec même basename | `export/<basename>.md` auto |
 | `--stdout` | Afficher dans le terminal, pas d'écriture, pas de déplacement | désactivé |
+| `--details` | Champs complémentaires et synthèses des records | désactivé |
 | `--gps` | Inclure les points GPS échantillonnés | désactivé |
-| `--gps-limit` | Nb max de points GPS | 30 |
-| `--force` | Avec `--output`, autorise l'écrasement du `.md` cible | désactivé |
+| `--gps-limit` | Nb max de points GPS, entier strictement positif | 30 |
+| `--force` | Remplace Markdown/GPX, retire le GPX périmé si absent de la nouvelle activité ; jamais l’archive | désactivé |
 
 ---
 
@@ -425,6 +488,9 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | `xml.etree.ElementTree` (stdlib) | Pas de dépendance externe | Ajouter `gpxpy` |
 | Pas de GPX vide | Évite les artefacts trompeurs | Créer un fichier sans trace |
 | Module `gpx_exporter.py` dédié | Sépare la génération XML du parsing FIT | Tout garder dans `extractor.py` |
+| Préparation puis restauration sur erreur gérée | Évite les exports partiels, archivage compris | Écrire le Markdown avant de construire le GPX |
+| Mode `--details` optionnel | Complète les métriques sans allonger le résumé par défaut | Dérouler toutes les séries brutes |
+| Synthèses sans dépendance supplémentaire | Comptages et statistiques simples avec la stdlib | Ajouter une bibliothèque de données |
 
 ---
 
@@ -440,7 +506,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 
 ## 9. Invariants (VERY IMPORTANT)
 
-- **Ne jamais écrire de fichier `.fit` intermédiaire** sur le disque
+- **Ne jamais écrire de `.fit` décompressé sur disque** ; seules les copies exactes de la source sont utilisées pour préparer l’archive
 - **Toujours utiliser `StandardUnitsDataProcessor()`** — ne jamais retirer
 - **Ne jamais inclure les champs `unknown_XXX`** dans le Markdown
 - **Ne jamais inclure les intervalles HRV bruts** — uniquement RMSSD et SDNN calculés
@@ -449,11 +515,11 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - **Le Markdown doit rester lisible sans rendu** — tableaux GFM simples, pas de HTML
 - **Un `.fit` traité avec succès ne reste pas dans `import/`** — sauf `--stdout`
 - **Un `.fit` n'est jamais déplacé si la génération `.md` échoue** — la source reste intacte
-- **Le `.fit` archivé et le `.md` généré partagent toujours le même basename**
+- **Le `.fit` archivé partage le basename du `.md`**, sauf suffixe `_dupN` sur collision
 - **Tout export automatique va dans `export/`** ; tout import automatique vient de `import/`
-- **Les dossiers `import/` et `export/` sont créés automatiquement** si absents
+- **Les dossiers `import/` et `export/` sont créés pour les exports fichiers**, jamais avec `--stdout`
 - **Le nommage produit toujours des noms compatibles** avec la plupart des systèmes de fichiers (ASCII, `[a-z0-9_]`)
-- **Le `.gpx` partage toujours le même basename** que le `.md` et le `.fit`
+- **Le `.gpx` partage toujours le basename du `.md`** ; une archive en conflit peut avoir `_dupN`
 - **Le `.gpx` est toujours écrit dans `export/`** (ou à côté de `--output`)
 - **Aucun `.gpx` vide n'est généré** — si aucun point GPS exploitable, pas de fichier
 - **Le GPX ne contient que des points lat/lon valides** (numériques, dans les plages)
@@ -461,6 +527,8 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - **L'absence de GPS n'empêche pas la génération du Markdown** — message stderr explicite, traitement réussi
 - **Aucune dépendance externe pour le GPX** — stdlib `xml.etree.ElementTree` uniquement
 - **Les extensions propriétaires GPX (FC, vitesse, cadence)** sont hors périmètre V1
+- **Restaurer les sorties sur erreur gérée, archivage compris** ; conserver les sauvegardes si la restauration échoue
+- **`--details` ne change pas le rendu par défaut** ; aucun ajout de séries brutes
 
 ---
 
@@ -484,10 +552,12 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 
 ## 11. Known Issues & Tech Debt
 
-- [ ] Pas de test sur activités indoor (natation, home trainer) — GPS absent, comportement à vérifier
+- [ ] Validation indoor sur matériel réel limitée ; absence de GPS vérifiable par données synthétiques
 - [ ] `feeling` (ressenti Suunto 1-5) : mapping valeur numérique → libellé non documenté
 - [ ] Multi-session FIT (triathlon) : non géré — hypothèse 1 session par fichier
 - [ ] Batch processing non prévu
+- [ ] Aucune suite de tests automatisés versionnée ; contrôles ponctuels décrits dans `CONTRIBUTING.md`
+- [ ] Pas de reprise après arrêt brutal ni coordination d’exports concurrents
 
 ---
 
@@ -495,6 +565,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 
 | Date | Changement |
 |------|------------|
+| 2026-09-13 | Validation GPS positive, publication avec restauration sur erreur incluant l’archivage, mode `--details`, clarification des spécifications et des consignes |
 | 2026-05-13 | Initialisation du projet et de la spec v1 |
 | 2026-05-13 | v2 : analyse réelle de 3 fichiers FIT (Suunto Spartan Ultra + Garmin Edge). Refonte cible (coaching IA), extraction générique, HRV calculé, developer fields Suunto documentés, sections conditionnelles, suppression unknown_XXX |
 | 2026-05-14 | Workflow `import/` → `export/` : résolution input depuis `import/`, basename normalisé `YYYY-MM-DD_<activité>_<indice>` partagé `.md`/`.fit`, déplacement du `.fit` source après succès, auto-incrément de l'indice, module `file_manager.py` dédié |
@@ -546,7 +617,7 @@ Ce projet a été développé et testé sur deux matériels réels :
 
 ### Forbidden
 - Introduire une dépendance autre que `fitparse` sans justification
-- Écrire des fichiers temporaires `.fit` sur le disque
+- Écrire un `.fit` décompressé sur le disque (les copies exactes de source pour l’archivage sont autorisées)
 - Supprimer `StandardUnitsDataProcessor` de l'initialisation de `FitFile`
 - Inclure les champs `unknown_XXX` dans le Markdown
 - Inclure les intervalles HRV bruts dans le Markdown
