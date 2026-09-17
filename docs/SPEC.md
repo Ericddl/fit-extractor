@@ -12,7 +12,7 @@
 |-------|--------|
 | Phase | v1 — file_manager & export GPX fusionnés dans `main` |
 | Branche de référence | `main` |
-| Dernière mise à jour | 2026-09-13 |
+| Dernière mise à jour | 2026-09-17 |
 | Prochaine action | Étendre la couverture matérielle au-delà de Suunto Spartan Ultra / Garmin Edge |
 
 ---
@@ -22,7 +22,7 @@
 **Project name** : `fit-extractor`
 **Objective** : Extraire les données d'un fichier `.fit` (montre ou GPS vélo) et les convertir en Markdown structuré, **optimisé pour être envoyé à une IA (ChatGPT, Claude) pour du coaching sportif assisté**.
 **Main stack** : Python 3.10+, `fitparse`, stdlib uniquement
-**Last update** : 2026-09-13
+**Last update** : 2026-09-17
 
 ### High-level behavior
 - **Inputs** : un fichier `.fit` (ou `.fit.gz`) — Suunto Spartan Ultra (running/trail) ou GPS Garmin Edge (vélo)
@@ -246,6 +246,44 @@ sont conditionnées par la présence de leurs données, pas strictement par la m
   Le repli sur les records est explicitement signalé.
 - **Temps de récupération** : `recovery_time` (s) → `Xh YYmin`
 - **Zones FC** : `time_in_hr_zone` est un tuple `(z1, z2, z3, z4, z5)` en secondes → formater chaque zone
+
+### Graphiques Unicode affichés par défaut
+
+Après le résumé général, « Graphiques de la séance » contient altitude/distance FIT,
+cardio/temps enregistré et vitesse ou allure/temps enregistré. Aucun changement CLI,
+aucune dépendance supplémentaire et aucun effet sur le GPX, `--details` ou `--gps-limit`.
+
+`analyze_records()` ajoute `graphs`, avec les clés `altitude`, `heart_rate`, `speed`.
+Chaque série contient `values` (60 valeurs numériques ou `None`), `start`, `end`
+et `reason`. Si indisponible, `values` est vide et `reason` explique pourquoi.
+La normalisation et l’échantillonnage sont dans `activity_analysis.py`, le rendu
+Unicode et les unités françaises dans `extractor.py`.
+
+- Axes construits sur les positions valides du premier au dernier record, sans
+  resserrer l’axe autour des seuls points où un capteur est disponible. Temps relatif
+  au premier horodatage ; distance cumulée FIT convertie en mètres.
+- 60 positions régulièrement espacées, extrémités incluses. Interpolation linéaire
+  entre deux records adjacents avec axe croissant, mesure valide et durée positive
+  inférieure ou égale au seuil partagé par `_time_intervals()` :
+  `max(10 s, 5 × médiane des intervalles temporels positifs)`.
+- Une mesure, date ou distance nécessaire manquante coupe le tracé ; aucune
+  interpolation à travers un trou. Cardio/vitesse n’exigent pas de distance ou GPS.
+  Recul temporel : graphiques indisponibles ; recul de distance : altitude indisponible.
+  Une date dupliquée ne permet pas d’interpoler l’intervalle correspondant.
+- Priorité aux altitudes/vitesses enhanced valides, repli standard ; unités
+  inconnues et valeurs non finies exclues. FC strictement positive, vitesse positive
+  ou nulle, altitude négative admise. Ne pas dériver la vitesse des coordonnées GPS.
+- Sans deux mesures, axe d’étendue positive ou intervalle exploitable, afficher
+  un motif à la place du graphique, pas un tracé artificiel.
+- Tracé sur huit niveaux `▁▂▃▄▅▆▇█`, espaces conservés pour `None`. Série constante :
+  `▄` et mention explicite. Échelles indépendantes sur les valeurs échantillonnées,
+  bornes affichées dans les unités de chaque sport, pas comme extrema bruts du FIT.
+- Vitesse/allure : hauteur croissante avec la vitesse. Course en min/km, natation
+  en min/100 m, autres sports en km/h. En allure, une vitesse nulle devient `·` et
+  ne participe pas aux bornes d’allure ; une série entièrement nulle est signalée.
+- Blocs de code avec tracé, axe et repères début/milieu/fin. Les espaces ne doivent
+  pas être supprimés ; l’alignement dépend de la police Unicode monospace du lecteur.
+  Un pic bref entre deux positions peut ne pas apparaître dans cet aperçu.
 
 ### Analyses sportives affichées par défaut
 
@@ -608,7 +646,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 
 ## 10. Out of Scope
 
-- Pas de visualisation graphique (carte rendue, image de parcours)
+- Pas de carte rendue ni d’image de parcours ; graphiques textuels Unicode uniquement
 - Pas d'export CSV/JSON/HTML — sorties limitées à Markdown et GPX
 - Pas d'extensions GPX (FC, cadence, vitesse, puissance, TrackPointExtension Garmin/Strava/Suunto)
 - Pas de simplification ou compression de trace GPX
@@ -639,6 +677,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 
 | Date | Changement |
 |------|------------|
+| 2026-09-17 | Graphiques Unicode par défaut : altitude/distance, cardio et vitesse/allure selon le temps ; 60 positions, trous préservés, seuil d’interruption partagé |
 | 2026-09-13 | Markdown adapté au sport : natation, allures par tour, zones en %, temps hors chronomètre, TE anaérobie, VAM et altitudes ; analyses kilométriques, terrain et qualité par défaut via `activity_analysis.py` |
 | 2026-09-13 | Validation GPS positive, publication avec restauration sur erreur incluant l’archivage, mode `--details`, clarification des spécifications et des consignes |
 | 2026-05-13 | Initialisation du projet et de la spec v1 |

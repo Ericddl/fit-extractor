@@ -167,6 +167,7 @@ python3 extractor.py Trail_le_matin.fit --output activites/trail.md --force
 Les sections n'apparaissent que si les données correspondantes existent dans le FIT :
 
 - **Résumé général** : distance, durée, FC, dénivelé, calories, allure/VAM, TSS, TE…
+- **Graphiques de la séance** : altitude, cardio et vitesse/allure en Unicode, après le résumé
 - **Zones d'entraînement** : temps et pourcentages en zones FC, catégories aérobie/anaérobie séparées
 - **Métriques avancées (Suunto)** : récupération, EPOC, ressenti, seuil aérobie…
 - **HRV** : RMSSD et SDNN calculés depuis les intervalles RR (Suunto uniquement)
@@ -221,6 +222,29 @@ intervalles où les deux mesures FC sont présentes. Le dénivelé calculé est 
 **estimation**, distincte du total fourni par l’appareil. Une section indisponible
 est expliquée dans la qualité ; l’absence de GPS n’empêche pas ces calculs si les
 distances et horodatages sont disponibles.
+
+### Graphiques Unicode
+
+La section « Graphiques de la séance » est incluse par défaut, aussi avec
+`--stdout`. Elle affiche trois tracés de 60 caractères dans des blocs de code :
+altitude selon la distance FIT, cardio et vitesse/allure selon le temps enregistré.
+Les repères indiquent le début, le milieu et la fin de chaque axe.
+
+Les caractères `▁▂▃▄▅▆▇█` utilisent une échelle propre à chaque graphique, dont les
+bornes décrivent les valeurs tracées, pas les extrema bruts de la séance.
+Une barre haute signifie plus haut en altitude, plus élevé en cardio, ou **plus
+rapide** pour vitesse/allure. Les allures sont affichées en min/km en course,
+min/100 m en natation ; les autres sports utilisent des km/h.
+
+L’échantillonnage est régulier, avec interpolation entre records consécutifs
+valides seulement. Les interruptions et mesures absentes restent des espaces ;
+`·` signifie une vitesse nulle sur un graphique d’allure. Une série constante est
+signalée et dessinée à hauteur intermédiaire. Une série inexploitable est expliquée
+à la place du tracé. Cardio et vitesse n’exigent ni GPS ni distance.
+
+Ces aperçus peuvent manquer un pic bref entre deux positions échantillonnées.
+Ils ne changent ni le GPX ni les calculs sportifs ; `--gps-limit` ne les limite pas.
+L’alignement dépend du support Unicode et de la police monospace du lecteur Markdown.
 
 ### Mode détaillé
 

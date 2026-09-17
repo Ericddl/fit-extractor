@@ -245,6 +245,74 @@ def _append_record_summary(lines: list, records: list) -> None:
         ])
 
 
+def _sparkline(values: list, pace: bool = False) -> tuple[str, float | None, float | None]:
+    visible = [value for value in values if value is not None and (not pace or value > 0)]
+    minimum = min(visible) if visible else None
+    maximum = max(visible) if visible else None
+    glyphs = "▁▂▃▄▅▆▇█"
+    characters = []
+    for value in values:
+        if value is None:
+            characters.append(" ")
+        elif pace and value == 0:
+            characters.append("·")
+        elif maximum == minimum:
+            characters.append("▄")
+        else:
+            level = round(7 * (value - minimum) / (maximum - minimum))
+            characters.append(glyphs[max(0, min(7, level))])
+    return "".join(characters), minimum, maximum
+
+
+def _graph_axis_labels(labels: list[str]) -> str:
+    characters = [" "] * 60
+    for offset, label in zip((0, 30 - len(labels[1]) // 2, 60 - len(labels[2])), labels):
+        characters[offset:offset + len(label)] = label
+    return "".join(characters)
+
+
+def _append_activity_graphs(lines: list, graphs: dict, sport: str) -> None:
+    lines.extend([
+        "## Graphiques de la séance", "",
+        "Échelles indépendantes, bornes des valeurs tracées. Espaces : données non tracées. "
+        "Plus haut = altitude ou cardio plus élevé ; pour vitesse/allure, plus haut = plus rapide. "
+        "En allure, · indique une vitesse nulle.", "",
+    ])
+    for key, title in (("altitude", "Altitude — distance FIT"),
+                       ("heart_rate", "Cardio — temps enregistré"),
+                       ("speed", "Allure — temps enregistré" if sport in {"running", "swimming"}
+                        else "Vitesse — temps enregistré")):
+        graph = graphs[key]
+        lines.extend([f"### {title}", ""])
+        if graph["reason"]:
+            lines.extend([f"Graphique indisponible : {graph['reason']}.", ""])
+            continue
+        pace = key == "speed" and sport in {"running", "swimming"}
+        drawing, minimum, maximum = _sparkline(graph["values"], pace)
+        if minimum is None:
+            scale = "Vitesse nulle sur les positions tracées."
+        else:
+            if key == "speed":
+                low_label, high_label = _fmt_effort(minimum, sport), _fmt_effort(maximum, sport)
+            else:
+                unit = "m" if key == "altitude" else "bpm"
+                low_label, high_label = f"{minimum:.1f} {unit}", f"{maximum:.1f} {unit}"
+            scale = f"Bas : {low_label} ; haut : {high_label}."
+            if minimum == maximum:
+                if pace and 0 in graph["values"]:
+                    scale += " Allure constante hors arrêts."
+                else:
+                    scale += " Valeur constante."
+        start, end = graph["start"], graph["end"]
+        if key == "altitude":
+            labels = [f"{position / 1000:.2f} km" for position in (start, (start + end) / 2, end)]
+        else:
+            labels = [_fmt_duration(round(position)) for position in (0, (end - start) / 2, end - start)]
+        ticks = "┬" + "─" * 29 + "┬" + "─" * 28 + "┬"
+        lines.extend([scale, "", "```text", drawing, ticks, _graph_axis_labels(labels), "```", ""])
+    lines.extend(["---", ""])
+
+
 def _append_analysis_table(lines: list, title: str, headers: list, rows: list, note: str = "") -> None:
     if not rows:
         return
@@ -488,6 +556,8 @@ def format_markdown(
     lines.append("")
     lines.append("---")
     lines.append("")
+
+    _append_activity_graphs(lines, analysis["graphs"], sport_kind)
 
     # --- Zones d'entraînement ---
     hr_zones = sv("time_in_hr_zone")

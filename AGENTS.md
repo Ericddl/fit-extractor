@@ -17,6 +17,8 @@ Le traitement est local, sans appel réseau ni API d’IA.
 
 - `extractor.py` : CLI `argparse`, parsing FIT, calcul HRV et rendu Markdown.
 - `activity_analysis.py` : calculs purs d’allure, kilomètres, terrain et qualité, sans accès disque.
+- Les séries des graphiques Unicode sont échantillonnées dans `activity_analysis.py` ;
+  leur rendu reste dans `extractor.py`.
 - `file_manager.py` : chemins, nommage, collisions et archivage des sources.
 - `gpx_exporter.py` : filtrage GPS et génération XML avec `xml.etree.ElementTree`.
 - Python 3.10+ ; seule dépendance externe : `fitparse>=1.2.0` dans `requirements.txt`.
@@ -58,6 +60,8 @@ python3 -m venv .venv
 - Codes de sortie : 0 succès, 1 erreur de traitement, 2 arguments invalides.
 - Les analyses sportives sont affichées par défaut ; `--details` ajoute seulement
   les compléments techniques. Course : min/km ; natation : min/100 m ; vélo : km/h.
+- Les graphiques Unicode sont inclus par défaut : altitude/distance, cardio/temps,
+  vitesse ou allure/temps, sur 60 caractères et avec des échelles indépendantes.
 
 ## Validation
 
@@ -76,6 +80,8 @@ Il n’y a ni dossier `examples/` ni jeu de FIT de test versionné.
   copies de FIT course/trail/vélo/natation sans toucher aux originaux.
 - Indiquer les commandes exécutées et les limites de validation ; ne pas
   présenter l’affichage de l’aide comme un test complet de conversion.
+- Graphiques : contrôler largeur, constantes, trous, axes régressifs, unités,
+  vitesse nulle en allure et cardio/vitesse sans GPS ni distance.
 
 ## Conventions et précautions
 
@@ -96,6 +102,9 @@ Il n’y a ni dossier `examples/` ni jeu de FIT de test versionné.
   contrairement aux synthèses d’échantillons de `--details`.
 - Ne pas confondre durée chronométrée, durée enregistrée et mouvement réel ; ne
   pas inventer de puissance, de SWOLF ou d’interprétation des champs propriétaires.
+- Partager le seuil d’interruption entre analyses et graphiques ; ne pas tracer
+  à travers les trous. En allure, plus haut = plus rapide ; `·` = vitesse nulle.
+  Les bornes des graphiques concernent les valeurs tracées, pas les extrema bruts.
 - Décompresser uniquement en mémoire ; préserver l’extension composée `.fit.gz`
   à l’archivage (`name.lower().endswith(".fit.gz")`).
 - Utiliser `export_activity()` pour le lot Markdown/GPX/archive ; supprimer la

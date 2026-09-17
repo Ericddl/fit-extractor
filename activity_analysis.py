@@ -1,6 +1,7 @@
 """Calculs sportifs purs à partir des champs FIT normalisés, sans accès disque."""
 
 import math
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import median
@@ -86,6 +87,69 @@ def _valid_interval(first: Sample, second: Sample, gap_limit: float) -> bool:
         and first.distance is not None and second.distance is not None
         and second.distance >= first.distance
     )
+
+
+def _time_intervals(samples: list[Sample]) -> tuple[list[float], float]:
+    intervals = [second.timestamp - first.timestamp
+                 for first, second in zip(samples, samples[1:])
+                 if first.timestamp is not None and second.timestamp is not None
+                 and second.timestamp > first.timestamp]
+    threshold = max(10, 5 * median(intervals)) if intervals else 10
+    return intervals, threshold
+
+
+def _graph_series(samples: list[Sample], values: list, axis: str, gap_limit: float) -> dict:
+    coordinates = [getattr(sample, axis) for sample in samples]
+    present = [value for value in coordinates if value is not None]
+    timestamps = [sample.timestamp for sample in samples if sample.timestamp is not None]
+    result = {"values": [], "start": None, "end": None, "reason": None}
+    if any(second < first for first, second in zip(timestamps, timestamps[1:])):
+        result["reason"] = "horodatages en recul"
+    elif any(second < first for first, second in zip(present, present[1:])):
+        result["reason"] = "distance cumulée en recul"
+    elif len(present) < 2 or present[-1] <= present[0]:
+        result["reason"] = "axe sans étendue exploitable"
+    elif sum(value is not None for value in values) < 2:
+        result["reason"] = "moins de deux mesures valides"
+    if result["reason"]:
+        return result
+    start, end = present[0], present[-1]
+    positions = [start + (end - start) * index / 59 for index in range(60)]
+    positions[-1] = end
+    sampled = [None] * 60
+    for index, (first, second) in enumerate(zip(samples, samples[1:])):
+        left, right = coordinates[index:index + 2]
+        before, after = values[index:index + 2]
+        if (left is None or right is None or right <= left
+                or before is None or after is None
+                or first.timestamp is None or second.timestamp is None
+                or not 0 < second.timestamp - first.timestamp <= gap_limit):
+            continue
+        for column in range(bisect_left(positions, left), bisect_right(positions, right)):
+            fraction = (positions[column] - left) / (right - left)
+            sampled[column] = before + (after - before) * fraction
+    if not any(value is not None for value in sampled):
+        result["reason"] = "aucun intervalle continu exploitable"
+        return result
+    result.update(values=sampled, start=start, end=end)
+    return result
+
+
+def _activity_graphs(records: list[dict], samples: list[Sample], gap_limit: float) -> dict:
+    speeds = []
+    for record in records:
+        speed = None
+        for key in ("enhanced_speed", "speed"):
+            candidate = numeric_field(record, key, "km/h")
+            if candidate is not None and candidate >= 0:
+                speed = candidate
+                break
+        speeds.append(speed)
+    return {
+        "altitude": _graph_series(samples, [sample.altitude for sample in samples], "distance", gap_limit),
+        "heart_rate": _graph_series(samples, [sample.heart_rate for sample in samples], "timestamp", gap_limit),
+        "speed": _graph_series(samples, speeds, "timestamp", gap_limit),
+    }
 
 
 def _altitude_runs(samples: list[Sample], gap_limit: float) -> list[list[Sample]]:
@@ -174,11 +238,7 @@ def _distance_bins(samples: list[Sample], gap_limit: float, width: float, origin
 def analyze_records(records: list[dict], sport: str) -> dict:
     """Analyse la couverture et les portions continues, sans interpoler les interruptions."""
     samples = [_sample(record) for record in records]
-    positive_intervals = [second.timestamp - first.timestamp
-                          for first, second in zip(samples, samples[1:])
-                          if first.timestamp is not None and second.timestamp is not None
-                          and second.timestamp > first.timestamp]
-    gap_limit = max(10, 5 * median(positive_intervals)) if positive_intervals else 10
+    positive_intervals, gap_limit = _time_intervals(samples)
     gaps = [interval for interval in positive_intervals if interval > gap_limit]
     times = [sample.timestamp for sample in samples if sample.timestamp is not None]
     distances = [sample.distance for sample in samples if sample.distance is not None]
@@ -193,7 +253,8 @@ def analyze_records(records: list[dict], sport: str) -> dict:
         "gap_limit": gap_limit, "gaps": len(gaps), "largest_gap": max(gaps, default=0),
     }
     runs = _altitude_runs(samples, gap_limit)
-    result = {"quality": quality, "kilometers": [], "kilometer_reason": None,
+    result = {"quality": quality, "graphs": _activity_graphs(records, samples, gap_limit),
+              "kilometers": [], "kilometer_reason": None,
               "terrain": {}, "terrain_distance": 0.0,
               "altitudes": [sample.altitude for sample in samples if sample.altitude is not None]}
     if sport == "running":

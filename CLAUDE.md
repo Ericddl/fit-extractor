@@ -42,7 +42,7 @@ Show swimming strokes/cycles/cadence, HR-zone percentages, anaerobic Training Ef
 altitude extrema and VAM in m/h only when the required fields are available.
 
 `analyze_records(records, sport)` returns quality indicators, kilometer splits,
-terrain aggregates and altitude samples without modifying input or accessing disk.
+terrain aggregates, altitude samples and graph series without modifying input or accessing disk.
 Use FIT distance units explicitly; prefer valid enhanced altitude fields. Never
 interpolate gaps above max(10 s, 5 × median positive interval). Suppress kilometer
 splits on backwards timestamps or distance regressions; mark incomplete splits.
@@ -50,6 +50,18 @@ Terrain uses a five-point median within continuous portions, 50 m windows and ±
 slope thresholds. Label elevation as estimated and show analyzed distance. HR means
 in these analyses are time-weighted over intervals with both HR endpoints present,
 unlike the unweighted sample summaries in `--details`. No new power/SWOLF calculations.
+
+The default Markdown includes Unicode graphs after the general summary: altitude
+against FIT distance, HR and speed/pace against recorded time. Each has 60 regularly
+spaced positions including endpoints, its own scale and start/mid/end axis labels.
+Graph preparation lives in `activity_analysis.py`; Unicode rendering in `extractor.py`.
+Share `_time_intervals()` with existing analyses for the gap threshold. Interpolate
+only between adjacent valid records, never across gaps or missing measurements.
+Temporal graphs do not require distance or GPS. Backwards times invalidate graphs;
+backwards distance invalidates the altitude graph only. Explain unavailable series.
+Use spaces for unplotted values and `·` for zero speed in pace graphs. Higher always
+means faster for speed/pace. Label constant series and the bounds of plotted values,
+not raw extrema. No images, extra dependencies or CLI switches.
 
 Data flow:
 
@@ -117,7 +129,8 @@ Verify byte-for-byte rollback, gzip preservation, collisions and sport-specific
 rendering. Exercise synthetic distance boundaries, ±3% slopes, altitude noise,
 gaps, missing HR and timestamp/distance regressions; validate real running, trail,
 cycling and swimming FIT copies when available. Report actual checks and limitations;
-help alone is not a conversion test.
+help alone is not a conversion test. For graphs, verify constant/rising/falling
+series, exact width, missing values, zero speed, units and time-only sensor data.
 
 ## Hardware-Specific Sections
 

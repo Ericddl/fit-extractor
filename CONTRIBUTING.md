@@ -50,6 +50,13 @@ d’altitude, l’absence de GPS et les unités course/natation/vélo. Compléte
 copies de FIT des quatre sports disponibles. `activity_analysis.py` n’effectue
 aucune écriture et ne doit pas modifier les données reçues.
 
+Pour les graphiques Unicode, vérifier les 60 caractères et leurs espaces conservés
+dans les blocs Markdown : séries constantes/croissantes/décroissantes, deux points,
+mesures absentes, interruptions, dates ou distances régressives. Vérifier les unités,
+la priorité enhanced, les vitesses nulles (`·` en allure), et cardio/vitesse sans
+GPS ni distance. Comparer les autres analyses avant/après ; le seuil d’interruption
+doit rester commun. Un aperçu échantillonné ne représente pas tous les extrema bruts.
+
 ## Invariants à respecter
 
 Ces règles portent la conception du projet — une PR qui les enfreint sera refusée, sauf discussion préalable en issue :
