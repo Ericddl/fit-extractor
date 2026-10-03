@@ -61,7 +61,6 @@ fit-extractor/
 ├── import/               # Fichiers .fit / .fit.gz à traiter (créé automatiquement)
 │   └── .gitkeep
 ├── AGENTS.md             # Instructions Codex
-├── CLAUDE.md             # Instructions Claude Code
 ├── CONTRIBUTING.md       # Contribution et validation
 ├── tests/                # Tests unittest de l’historique et de son intégration
 └── export/               # .md/.gpx générés + .fit archivés

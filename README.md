@@ -332,7 +332,6 @@ Cinq modules, sans framework :
 | [`docs/historique_activites.md`](docs/historique_activites.md) | Format et règles de l’historique local des activités |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Comment contribuer, invariants à respecter |
 | [`AGENTS.md`](AGENTS.md) | Instructions et référence pour Codex |
-| [`CLAUDE.md`](CLAUDE.md) | Contexte destiné aux assistants de code (Claude Code) |
 
 ## Vie privée
 

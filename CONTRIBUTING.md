@@ -91,7 +91,8 @@ Ces règles portent la conception du projet — une PR qui les enfreint sera ref
 - **`--details` reste optionnel** : pas de RR bruts ni de séries intégrales ; moyennes d’échantillons explicitement non pondérées.
 - **Analyses par défaut** : FC pondérée par les durées valides, dénivelé signalé comme estimé ; aucune interpolation à travers une interruption, aucune assimilation du chronomètre au mouvement réel.
 
-La liste complète et son rationale sont dans [`docs/SPEC.md`](docs/SPEC.md) et [`CLAUDE.md`](CLAUDE.md).
+Les consignes pour Codex sont dans [`AGENTS.md`](AGENTS.md) ; les invariants et
+les raisons des choix sont détaillés dans [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Style
 

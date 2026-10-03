@@ -157,7 +157,7 @@ Exemple :
 | `extractor.py` | Ajout du déplacement/renommage du fichier source après succès | Moyen |
 | `README.md` | Mise à jour de l'usage CLI et des exemples | Faible |
 | `SPEC.md` | Mise à jour architecture, CLI, core logic, invariants, historique | Moyen |
-| `CLAUDE.md` | Mise à jour des consignes de développement IA | Faible |
+| `AGENTS.md` | Mise à jour des consignes de développement pour Codex | Faible |
 
 ### Nouveaux composants
 
@@ -504,7 +504,7 @@ Note : le traitement batch reste une amélioration future possible.
 - [ ] Le comportement existant de parsing, de génération Markdown et de filtrage des champs reste inchangé.
 - [ ] `README.md` est mis à jour avec le nouveau workflow.
 - [ ] `SPEC.md` est mis à jour.
-- [ ] `CLAUDE.md` est mis à jour si les consignes IA doivent refléter le nouveau workflow.
+- [ ] `AGENTS.md` est mis à jour si les consignes pour Codex doivent refléter le nouveau workflow.
 
 ---
 

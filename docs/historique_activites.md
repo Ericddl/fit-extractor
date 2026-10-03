@@ -244,7 +244,7 @@ Les points d’intégration ci-dessous ont été vérifiés dans le code actuel.
 | `tests/test_activity_history.py` — nouveau | Tests ciblés des données, de la relecture, du remplacement et du tri. |
 | `tests/test_history_integration.py` — nouveau | Tests ciblés des branchements CLI, écritures et erreurs, avec `tempfile` et `unittest.mock`. |
 | `README.md`, `docs/SPEC.md` | Documenter le fichier ajouté, la déduplication limitée au registre et les avertissements. Mettre à jour architecture, flux, limites, historique d’évolution et exceptions aux règles « pas d’index global », « pas de HTML » et « pas de remplacement sans `--force` ». |
-| `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` | Actualiser les responsabilités, la présence de tests et leur commande. Préciser l’exception au remplacement automatique pour le seul registre généré. |
+| `AGENTS.md`, `CONTRIBUTING.md` | Actualiser les responsabilités, la présence de tests et leur commande. Préciser l’exception au remplacement automatique pour le seul registre généré. |
 | `.gitignore` | Le registre global est déjà couvert par `/export/*`, y compris avec `--output` ailleurs. Ne pas ajouter de règle globale `historique_activites.md`, qui masquerait aussi cette spécification. |
 
 La signature est `parse_fit(path: Path, *, include_history_id: bool = False) -> dict`.

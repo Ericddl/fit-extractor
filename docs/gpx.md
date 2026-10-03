@@ -150,7 +150,7 @@ fit-extractor/
 | `extractor.py` | Extension de la logique de nommage commune `.fit` / `.md` / `.gpx` | Moyen |
 | `README.md` | Mise à jour de l'usage et des exemples | Faible |
 | `SPEC.md` | Mise à jour architecture, CLI, core logic, invariants, out of scope et historique | Moyen |
-| `CLAUDE.md` | Mise à jour des consignes IA sur la génération GPX | Faible |
+| `AGENTS.md` | Mise à jour des consignes pour Codex sur la génération GPX | Faible |
 
 ### Nouveaux composants
 
@@ -503,7 +503,7 @@ Cette évolution ne couvre pas :
 - [ ] Le comportement existant de génération Markdown reste inchangé.
 - [ ] `README.md` est mis à jour avec le nouveau comportement.
 - [ ] `SPEC.md` est mis à jour.
-- [ ] `CLAUDE.md` est mis à jour si nécessaire.
+- [ ] `AGENTS.md` est mis à jour si nécessaire.
 
 ---
 
