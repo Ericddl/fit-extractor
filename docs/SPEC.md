@@ -10,9 +10,9 @@
 
 | Champ | Valeur |
 |-------|--------|
-| Phase | v1 — file_manager & export GPX fusionnés dans `main` |
+| Phase | v1 — exports Markdown/GPX, analyses et historique local |
 | Branche de référence | `main` |
-| Dernière mise à jour | 2026-09-17 |
+| Dernière mise à jour | 2026-10-03 |
 | Prochaine action | Étendre la couverture matérielle au-delà de Suunto Spartan Ultra / Garmin Edge |
 
 ---
@@ -22,13 +22,14 @@
 **Project name** : `fit-extractor`
 **Objective** : Extraire les données d'un fichier `.fit` (montre ou GPS vélo) et les convertir en Markdown structuré, **optimisé pour être envoyé à une IA (ChatGPT, Claude) pour du coaching sportif assisté**.
 **Main stack** : Python 3.10+, `fitparse`, stdlib uniquement
-**Last update** : 2026-09-17
+**Last update** : 2026-10-03
 
 ### High-level behavior
 - **Inputs** : un fichier `.fit` (ou `.fit.gz`) — Suunto Spartan Ultra (running/trail) ou GPS Garmin Edge (vélo)
 - **Outputs** :
   - un fichier `.md` lisible par un humain et dense en informations pour une IA de coaching ;
-  - un fichier `.gpx` 1.1 contenant la trace GPS complète (généré automatiquement si points GPS exploitables).
+  - un fichier `.gpx` 1.1 contenant la trace GPS complète (généré automatiquement si points GPS exploitables) ;
+  - le registre global `export/historique_activites.md`, mis à jour après export réussi, hors `--stdout`.
 - **Core use case principal** : copier-coller le `.md` dans ChatGPT ou Claude pour obtenir une analyse de séance, des conseils d'entraînement, un suivi de charge
 - **Core use cases secondaires** :
   - Extraction CLI simple : `python extractor.py mon_activite.fit`
@@ -51,6 +52,7 @@ L'utilisateur colle le Markdown dans une IA de coaching. Le Markdown doit donc �
 fit-extractor/
 ├── extractor.py          # Script principal, point d'entrée CLI
 ├── activity_analysis.py  # Calculs sportifs purs, sans accès disque
+├── activity_history.py   # Entrées et format du registre, sans accès disque
 ├── file_manager.py       # Résolution des chemins, nommage, déplacement
 ├── gpx_exporter.py       # Extraction des points GPS et génération du GPX 1.1
 ├── requirements.txt      # fitparse uniquement
@@ -60,7 +62,8 @@ fit-extractor/
 │   └── .gitkeep
 ├── AGENTS.md             # Instructions Codex
 ├── CLAUDE.md             # Instructions Claude Code
-├── CONTRIBUTING.md       # Contribution et validation manuelle
+├── CONTRIBUTING.md       # Contribution et validation
+├── tests/                # Tests unittest de l’historique et de son intégration
 └── export/               # .md/.gpx générés + .fit archivés
     └── .gitkeep
 ```
@@ -73,6 +76,7 @@ Les dossiers de travail ne sont pas créés avec `--stdout` ou des arguments inv
 import/fichier.fit (.gz)
   → résolution du chemin (depuis import/ si nom nu)
   → décompression en mémoire si .gz (gzip stdlib)
+  → empreinte SHA-256 des octets FIT pour l’historique, sauf --stdout
   → parsing FitFile (fitparse + StandardUnitsDataProcessor)
   → extraction générique des champs des types de messages sélectionnés
       session / lap / record / hrv / device_info /
@@ -86,11 +90,25 @@ import/fichier.fit (.gz)
   → préparation des fichiers temporaires et copie exacte de la source
   → sauvegarde des anciennes sorties puis publication Markdown/GPX/archive
   → suppression de la source en dernier ; restauration des sorties sur erreur gérée
+  → après succès : validation, ajout/remplacement et tri de l’historique
+  → remplacement atomique du registre ; avertissement et code 0 si cette étape échoue
 ```
 
 ---
 
 ## 3. Components
+
+### `activity_history.py`
+
+- **Rôle** : construire, relire, valider, trier et rendre les entrées du registre,
+  sans accès disque ni mutation des données FIT ; réutilise `numeric_field()`.
+- **Interfaces** : `HistoryEntry`, `build_history_entry(data, activity_id)`,
+  `parse_history(text)`, `render_history(entries)`,
+  `upsert_history(entries, entry, displaced_ids)`.
+- **Format** : tableau Markdown v1 à dix colonnes ; métriques présentées arrondies,
+  début UTC avec précision conservée, lien relatif optionnel, SHA-256 obligatoire
+  en commentaire HTML et marqueur final indiquant le nombre de lignes.
+- **Référence** : [historique_activites.md](historique_activites.md).
 
 ### `activity_analysis.py`
 
@@ -111,11 +129,15 @@ import/fichier.fit (.gz)
   ```
   python extractor.py <input.fit> [--output chemin/sortie.md] [--gps] [--gps-limit N] [--stdout] [--details] [--force]
   ```
-- **Dependencies** : `fitparse`, `gzip`, `pathlib`, `argparse`, `math`, `file_manager`
+- **Dependencies** : `fitparse`, `gzip`, `hashlib`, `pathlib`, `argparse`, `math`, `activity_history`, `file_manager`
+- **Parsing** : `parse_fit(path, *, include_history_id=False)` conserve ses appels
+  existants ; activé par la CLI hors `--stdout`, le paramètre ajoute `history`
+  avec `activity_id` ou `error`, sans exposer les octets bruts au rendu.
 - **Side effects** :
   - crée les dossiers `import/` et `export/` pour un export fichier, pas avec `--stdout`
   - écrit le `.md` dans `export/` (ou à l'emplacement `--output`, ou stdout)
   - déplace le `.fit` source vers `export/` après succès (sauf `--stdout`)
+  - déclenche ensuite la mise à jour du registre global, avec erreur non bloquante
 
 ### `gpx_exporter.py`
 
@@ -150,16 +172,48 @@ import/fichier.fit (.gz)
   export_activity(source: Path, md_target: Path, markdown: str,
                   gpx_content: str | None, force: bool = False) -> Path
   move_processed_fit(source: Path, md_target: Path) -> Path
+  activity_history_path() -> Path
+  update_activity_history(entry: HistoryEntry, md_target: Path) -> None
   ```
 - **Dependencies** : `pathlib`, `shutil`, `unicodedata`, `re`, `datetime`, `os`, `sys`, `tempfile` (stdlib uniquement)
 - **Side effects** :
   - `ensure_workdirs` : crée `import/` et `export/` si absents
   - `export_activity` : prépare, publie et archive avec restauration sur erreur gérée
   - `move_processed_fit` : utilitaire d’archivage isolé, non utilisé par la CLI
+  - `update_activity_history` : accès disque et liens du registre ; remplacement
+    atomique séparé de la transaction d’export
 
 ---
 
 ## 4. Core Logic (CRITICAL)
+
+### Historique local des activités
+
+Le registre reste dans `export/historique_activites.md`, même avec `--output`
+ailleurs. Il couvre les conversions nouvellement inscrites, sans reprise automatique
+des exports antérieurs. Les données de séance sont utilisées sans relire les
+Markdown ni recalculer D+, FC, TSS ou TE. Début : `session.start_time`, sinon premier
+`record.timestamp` valide ; dates naïves interprétées en UTC, aucune date d’import.
+
+L’identité est le SHA-256 du FIT décompressé : renommage et compression gzip ne
+changent pas l’entrée. Un nouvel export du même contenu remplace métriques et lien ;
+des octets différents restent distincts. Tri par début UTC décroissant, identifiant
+croissant à égalité, dates absentes en dernier. Les collisions de fichiers individuels
+gardent leurs règles actuelles. Si une destination est réutilisée par une autre
+activité, l’ancienne ligne perd son lien mais garde son identité et ses métriques.
+
+Lire et valider le registre uniquement après `export_activity()` réussi. Refuser
+les versions inconnues, lignes invalides, doublons d’identifiants, marqueurs finaux
+incohérents et liens symboliques sans modifier les octets existants. Rendre en mémoire,
+écrire un temporaire dans le même dossier, fermer puis remplacer avec `os.replace()`.
+Le registre généré est remplacé sans `--force` ; son chemin est réservé et toute
+sortie individuelle qui le désigne est refusée avant publication (code 1).
+
+Une erreur propre à l’historique, y compris le hachage, conserve l’export réussi
+et le code 0, avec avertissement et chemin de l’archive réelle pour reprise.
+`--stdout` ignore complètement l’historique. Imports séquentiels uniquement,
+sans verrouillage ni réparation automatique. Un arrêt après export peut laisser
+une entrée absente ; un échec après `--force` peut laisser un lien périmé.
 
 ### Règles de parsing
 
@@ -410,6 +464,8 @@ Options :
 Codes de sortie : 0 succès ; 1 erreur de lecture, rendu ou export ; 2 arguments
 invalides. Une limite GPS invalide est refusée avant lecture et création des dossiers.
 Les appels directs à `format_markdown()` avec une limite invalide lèvent `ValueError`.
+Un échec du seul historique conserve le code 0 avec avertissement ; une sortie
+qui désigne le registre réservé est refusée avant publication avec le code 1.
 
 ### Rendu détaillé optionnel
 
@@ -581,7 +637,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | Extraction générique (pas de liste figée) | Compatible tout matériel futur, découvert sur données réelles | Liste de champs codée en dur (casse dès nouveau matériel) |
 | Ignorer les `unknown_XXX` | Pas de valeur pour une IA de coaching, bruit pur | Les inclure (illisible) |
 | HRV résumé (RMSSD/SDNN) plutôt que raw | 10 000+ points = context overflow pour une IA | Export raw (inutilisable) |
-| Sections conditionnelles | Suunto ≠ Garmin — forcer toutes les sections = sections vides | Template fixe |
+| Sections individuelles conditionnelles | Suunto ≠ Garmin — forcer toutes les sections = sections vides | Template individuel fixe |
 | Labels en français | Cible utilisateur francophone, meilleure lisibilité dans ChatGPT | Anglais |
 | `--stdout` disponible | Permet copier-coller direct sans fichier intermédiaire | Toujours fichier |
 | Markdown pur (tableaux GFM) | Rendu parfait dans ChatGPT, Claude, Obsidian | JSON (moins lisible par humain) |
@@ -603,6 +659,9 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | Analyses sportives par défaut dans un module pur | Kilomètres, terrain et qualité utilisables sans option technique | Coupler les calculs aux écritures ou les masquer dans `--details` |
 | Estimations avec couverture explicite | Éviter les allures et dénivelés trompeurs sur données interrompues | Interpoler tous les trous ou confondre temps chronométré et mouvement |
 | Synthèses sans dépendance supplémentaire | Comptages et statistiques simples avec la stdlib | Ajouter une bibliothèque de données |
+| Registre Markdown v1 à colonnes fixes et commentaires techniques | Vue pour le coaching, relisible sans fichier de données supplémentaire | Base de données ou JSON |
+| Identité SHA-256 du FIT décompressé | Dédupliquer copies et gzip sans fusionner arbitrairement deux séances | Rapprochement par date/distance |
+| Historique publié après export, hors transaction | Conserver la conversion réussie en cas d’erreur de registre, avec avertissement | Annuler l’export pour un échec d’historique |
 
 ---
 
@@ -622,9 +681,9 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - **Toujours utiliser `StandardUnitsDataProcessor()`** — ne jamais retirer
 - **Ne jamais inclure les champs `unknown_XXX`** dans le Markdown
 - **Ne jamais inclure les intervalles HRV bruts** — uniquement RMSSD et SDNN calculés
-- **Ne jamais écraser silencieusement un fichier `.md` existant** — auto-incrément par défaut, ou `--force` avec `--output`
+- **Ne jamais écraser silencieusement un Markdown individuel existant** — auto-incrément par défaut, ou `--force` avec `--output` ; seul le registre généré est remplacé automatiquement après validation
 - **Les champs `None` ne doivent jamais provoquer une exception** — fallback `"-"` systématique
-- **Le Markdown doit rester lisible sans rendu** — tableaux GFM simples, pas de HTML
+- **Le Markdown doit rester lisible sans rendu** — tableaux GFM simples ; seuls les commentaires techniques du registre font exception à l’absence de HTML
 - **Un `.fit` traité avec succès ne reste pas dans `import/`** — sauf `--stdout`
 - **Un `.fit` n'est jamais déplacé si la génération `.md` échoue** — la source reste intacte
 - **Le `.fit` archivé partage le basename du `.md`**, sauf suffixe `_dupN` sur collision
@@ -641,6 +700,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - **Les extensions propriétaires GPX (FC, vitesse, cadence)** sont hors périmètre V1
 - **Restaurer les sorties sur erreur gérée, archivage compris** ; conserver les sauvegardes si la restauration échoue
 - **`--details` ne change pas le rendu par défaut** ; aucun ajout de séries brutes
+- **L’historique reste hors de la transaction d’export** ; ne pas lire son contenu avant succès, ne pas toucher aux sorties après un échec du registre
 
 ---
 
@@ -655,7 +715,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - Pas d'import du GPX dans Strava/Garmin/Suunto/autre plateforme
 - Pas d'envoi automatique à une IA (pas d'appel API ChatGPT/Claude depuis le script)
 - Pas de traitement batch multi-fichiers (une seule activité par appel) — explicitement hors périmètre de l'évolution `file_manager`
-- Pas de génération d'un index global des activités présentes dans `export/`
+- Pas de reconstruction d’un index des exports déjà présents ; le registre global est alimenté uniquement par les nouvelles conversions
 - Pas de suppression automatique des fichiers présents dans `export/`
 - Pas d'interface GUI
 - Pas de frontmatter YAML Obsidian/Dataview (à envisager en v2)
@@ -668,8 +728,12 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - [ ] `feeling` (ressenti Suunto 1-5) : mapping valeur numérique → libellé non documenté
 - [ ] Multi-session FIT (triathlon) : non géré — hypothèse 1 session par fichier
 - [ ] Batch processing non prévu
-- [ ] Aucune suite de tests automatisés versionnée ; contrôles ponctuels décrits dans `CONTRIBUTING.md`
+- [ ] Couverture automatisée centrée sur l’historique et l’intégration d’export ; analyses sportives et compatibilité matérielle à compléter selon `CONTRIBUTING.md`
 - [ ] Pas de reprise après arrêt brutal ni coordination d’exports concurrents
+- [ ] Historique potentiellement incomplet après erreur ou arrêt ; aucun mécanisme de réparation ou de reprise de l’existant
+
+Suite actuelle : `.venv/bin/python -B -m unittest discover -s tests -v`.
+Tests synthétiques avec `unittest.mock` et `tempfile`, sans FIT personnel versionné.
 
 ---
 
@@ -677,6 +741,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 
 | Date | Changement |
 |------|------------|
+| 2026-10-03 | Historique Markdown global : déduplication SHA-256 du FIT décompressé, tri UTC, publication atomique après export et avertissements non bloquants ; tests unittest synthétiques |
 | 2026-09-17 | Graphiques Unicode par défaut : altitude/distance, cardio et vitesse/allure selon le temps ; 60 positions, trous préservés, seuil d’interruption partagé |
 | 2026-09-13 | Markdown adapté au sport : natation, allures par tour, zones en %, temps hors chronomètre, TE anaérobie, VAM et altitudes ; analyses kilométriques, terrain et qualité par défaut via `activity_analysis.py` |
 | 2026-09-13 | Validation GPS positive, publication avec restauration sur erreur incluant l’archivage, mode `--details`, clarification des spécifications et des consignes |
@@ -714,10 +779,11 @@ Ce projet a été développé et testé sur deux matériels réels :
 - Toujours respecter les invariants (section 9)
 - Ne pas modifier l'interface CLI sans mettre à jour la section 5
 - Les champs `None` doivent toujours être gérés
-- Toute nouvelle section Markdown doit être conditionnelle
+- Toute nouvelle section du Markdown individuel doit être conditionnelle ; le registre conserve ses dix colonnes fixes
 - Toute logique de chemin / nommage / déplacement appartient à `file_manager.py`, pas à `extractor.py`
 - Toute logique d'extraction GPS / génération XML GPX appartient à `gpx_exporter.py`, pas à `extractor.py`
 - Les calculs kilométriques, terrain et qualité appartiennent à `activity_analysis.py`, sans accès disque ; leur rendu reste dans `extractor.py`
+- Les transformations du registre appartiennent à `activity_history.py`, sans accès disque ; les chemins et sa publication restent dans `file_manager.py`
 - Respecter le workflow `import/` → `export/` : ne pas réintroduire d'écriture par défaut à côté du `.fit` source
 - Le GPX doit rester en stdlib (`xml.etree.ElementTree`) — pas d'ajout de dépendance `gpxpy` ou autre
 

@@ -8,6 +8,7 @@ Le traitement est local, sans appel réseau ni API d’IA.
 
 - `README.md` : installation et usage ; `CONTRIBUTING.md` : contributions.
 - `docs/SPEC.md` : spécification principale, décisions et limites connues.
+- `docs/historique_activites.md` : format et règles de l’historique local.
 - `docs/file_manager_change.md` et `docs/gpx.md` : spécifications historiques,
   dont certaines propositions diffèrent du code livré.
 - `CLAUDE.md` : contexte complémentaire ; `docs/SPEC_template.md` : modèle de document.
@@ -17,15 +18,17 @@ Le traitement est local, sans appel réseau ni API d’IA.
 
 - `extractor.py` : CLI `argparse`, parsing FIT, calcul HRV et rendu Markdown.
 - `activity_analysis.py` : calculs purs d’allure, kilomètres, terrain et qualité, sans accès disque.
+- `activity_history.py` : entrées, relecture, validation, tri et rendu du registre, sans accès disque.
 - Les séries des graphiques Unicode sont échantillonnées dans `activity_analysis.py` ;
   leur rendu reste dans `extractor.py`.
-- `file_manager.py` : chemins, nommage, collisions et archivage des sources.
+- `file_manager.py` : chemins, nommage, collisions, archivage et publication séparée du registre.
 - `gpx_exporter.py` : filtrage GPS et génération XML avec `xml.etree.ElementTree`.
 - Python 3.10+ ; seule dépendance externe : `fitparse>=1.2.0` dans `requirements.txt`.
   Privilégier la bibliothèque standard ; justifier toute nouvelle dépendance.
 
 Flux : lecture → décompression en mémoire → parsing → rendu Markdown/GPX en mémoire
-→ préparation des fichiers → publication et archivage avec restauration sur erreur.
+→ préparation des fichiers → publication et archivage avec restauration sur erreur
+→ mise à jour indépendante de l’historique après export réussi.
 Les dossiers `import/` et `export/` sont ancrés à
 la racine du projet, indépendamment du répertoire courant.
 Nommage automatique : `YYYY-MM-DD_<activité>_<indice>`, avec indice incrémenté
@@ -39,6 +42,7 @@ Depuis la racine, utiliser le venv existant ou l’installer si nécessaire :
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -B extractor.py --help
+.venv/bin/python -B -m unittest discover -s tests -v
 .venv/bin/python -B extractor.py mon_activite.fit --stdout
 .venv/bin/python -B extractor.py mon_activite.fit --stdout --details
 .venv/bin/python -B extractor.py mon_activite.fit --stdout --gps --gps-limit 30
@@ -58,6 +62,9 @@ python3 -m venv .venv
 - `--gps` et `--gps-limit` concernent seulement le Markdown ; le GPX conserve
   toute la trace exploitable. Une limite non positive est refusée avant parsing.
 - Codes de sortie : 0 succès, 1 erreur de traitement, 2 arguments invalides.
+- L’historique global reste dans `export/historique_activites.md`, même avec
+  `--output` ailleurs. Échec du seul historique : avertissement, archive indiquée,
+  code 0. Aucun accès à l’historique ni calcul d’empreinte avec `--stdout`.
 - Les analyses sportives sont affichées par défaut ; `--details` ajoute seulement
   les compléments techniques. Course : min/km ; natation : min/100 m ; vélo : km/h.
 - Les graphiques Unicode sont inclus par défaut : altitude/distance, cardio/temps,
@@ -65,8 +72,9 @@ python3 -m venv .venv
 
 ## Validation
 
-Aucune suite de tests automatisés, CI ou configuration de lint n’est présente.
-Il n’y a ni dossier `examples/` ni jeu de FIT de test versionné.
+La suite `unittest` dans `tests/` couvre l’historique et son intégration avec
+l’export, sur données synthétiques et dossiers temporaires. Pas de CI ni de
+configuration de lint ; aucun dossier `examples/` ou jeu de FIT personnel versionné.
 
 - Vérifier l’aide CLI et le rendu `--stdout` sur un FIT approprié si disponible.
 - Pour une évolution fonctionnelle, vérifier si possible Suunto et Garmin,
@@ -82,6 +90,8 @@ Il n’y a ni dossier `examples/` ni jeu de FIT de test versionné.
   présenter l’affichage de l’aide comme un test complet de conversion.
 - Graphiques : contrôler largeur, constantes, trous, axes régressifs, unités,
   vitesse nulle en allure et cardio/vitesse sans GPS ni distance.
+- Historique : vérifier la déduplication FIT/gzip, le tri UTC, la relecture stable,
+  les collisions de liens, le chemin réservé et la préservation du registre sur erreur.
 
 ## Conventions et précautions
 
@@ -107,6 +117,12 @@ Il n’y a ni dossier `examples/` ni jeu de FIT de test versionné.
   Les bornes des graphiques concernent les valeurs tracées, pas les extrema bruts.
 - Décompresser uniquement en mémoire ; préserver l’extension composée `.fit.gz`
   à l’archivage (`name.lower().endswith(".fit.gz")`).
+- Historique : SHA-256 des octets FIT décompressés, sans seconde lecture pour le
+  hachage. Conserver les identifiants cachés même sans lien. Ne pas réparer ou
+  écraser un registre invalide, symbolique ou d’une version inconnue.
+- Le registre généré est remplacé atomiquement sans `--force`, après l’export et
+  hors de sa transaction. Cette exception ne concerne aucun Markdown individuel.
+  Une sortie qui désigne le registre est refusée avant publication, même avec `--force`.
 - Utiliser `export_activity()` pour le lot Markdown/GPX/archive ; supprimer la
   source en dernier et restaurer les sorties sur erreur gérée. Conserver les
   sauvegardes et signaler leurs chemins si la restauration échoue elle-même.

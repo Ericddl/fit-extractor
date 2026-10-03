@@ -4,6 +4,7 @@ Workflow :
 - les .fit/.fit.gz à traiter sont lus depuis `import/`
 - les .md générés et les .fit traités sont archivés dans `export/`
 - le basename suit le format `YYYY-MM-DD_<activite>_<indice>` partagé par .md et .fit
+- le registre global est mis à jour séparément après un export réussi
 """
 
 from __future__ import annotations
@@ -14,19 +15,25 @@ import shutil
 import sys
 import tempfile
 import unicodedata
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
+
+from activity_history import HistoryEntry, parse_history, render_history, upsert_history
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 IMPORT_DIR = PROJECT_ROOT / "import"
 EXPORT_DIR = PROJECT_ROOT / "export"
-
 _INDEX_DIGITS = 3
 _BASENAME_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})_(?P<activity>.+)_(?P<index>\d{3})\.(?:md|fit|fit\.gz|gpx)$",
     re.IGNORECASE,
 )
+
+
+def activity_history_path() -> Path:
+    return EXPORT_DIR / "historique_activites.md"
 
 
 def ensure_workdirs() -> None:
@@ -146,6 +153,60 @@ def _same_file(first: Path, second: Path) -> bool:
     )
 
 
+def _is_history_destination(target: Path) -> bool:
+    history = activity_history_path()
+    if target.parent.resolve() / target.name == history.parent.resolve() / history.name:
+        return True
+    try:
+        return _same_file(target, history)
+    except (OSError, RuntimeError):
+        if not history.is_symlink():
+            raise
+        # Un registre symbolique en boucle ne doit pas empêcher un autre export.
+        # La mise à jour du registre le refusera après publication.
+        return False
+
+
+def update_activity_history(entry: HistoryEntry, md_target: Path) -> None:
+    """Met à jour le registre après export ; aucune modification des activités."""
+    history_path = activity_history_path()
+    if history_path.is_symlink():
+        raise ValueError(f"Historique symbolique refusé : {history_path}")
+    if history_path.exists() and not history_path.is_file():
+        raise ValueError(f"L’historique n’est pas un fichier : {history_path}")
+    try:
+        text = history_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        entries = []
+    else:
+        entries = parse_history(text)
+    directory = history_path.parent.resolve()
+    target = md_target.resolve()
+    relative_link = Path(os.path.relpath(target, directory)).as_posix()
+    entry = replace(entry, link=relative_link)
+    displaced_ids = {
+        old.activity_id for old in entries
+        if old.link is not None and (directory / old.link).resolve() == target
+    }
+    content = render_history(upsert_history(entries, entry, displaced_ids))
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="\n", prefix=".fit-history-",
+            dir=history_path.parent, delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        os.replace(temporary, history_path)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as error:
+                print(f"Attention : nettoyage impossible dans {temporary} : {error}", file=sys.stderr)
+
+
 def plan_archive_path(source: Path, md_target: Path) -> Path:
     extension = _source_fit_extension(source)
     target_dir = md_target.parent
@@ -187,6 +248,8 @@ def export_activity(
     Une seule exécution par destination ; aucune garantie après un arrêt brutal.
     Les sauvegardes sont conservées si la restauration échoue elle-même.
     """
+    if _is_history_destination(md_target):
+        raise ValueError(f"Chemin réservé à l’historique : {md_target}")
     gpx_content = gpx_content or None
     gpx_target = md_target.with_suffix(".gpx")
     archive_target = plan_archive_path(source, md_target)

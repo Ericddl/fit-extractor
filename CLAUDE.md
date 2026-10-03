@@ -21,6 +21,11 @@ exit with code 2 before parsing. Processing failures exit with code 1. `--stdout
 creates no directories or exports and never archives the source. Use `python -B`
 to also prevent Python bytecode caches.
 
+After a successful export, the global `export/historique_activites.md` is updated,
+including exports using `--output` elsewhere. A history-only failure warns on
+stderr, reports the actual archived FIT path and keeps exit code 0. `--stdout`
+does not hash the FIT or access history. No automatic import of existing exports.
+
 `--details` adds unrendered session/lap/device fields and record summaries while
 keeping the default Markdown unchanged. Numeric series use finite scalar samples:
 count/min/max/arithmetic mean, explicitly not time-weighted. Non-numeric series
@@ -30,9 +35,10 @@ and avoid repeated fields or redundant standard/enhanced variants.
 
 ## Architecture
 
-Four modules: `extractor.py` (parsing, rendering, CLI), `activity_analysis.py`
-(pure sports calculations), `file_manager.py` (paths, publication, archival), and
-`gpx_exporter.py` (GPS extraction and GPX generation).
+Five modules: `extractor.py` (parsing, rendering, CLI), `activity_analysis.py`
+(pure sports calculations), `activity_history.py` (pure history entries, validation,
+sorting and Markdown), `file_manager.py` (paths, publication, archival, history I/O),
+and `gpx_exporter.py` (GPS extraction and GPX generation).
 
 Sports analyses appear by default; `--details` adds technical complements only.
 Select pace units by sport, never device: min/km for running, min/100 m for swimming,
@@ -71,11 +77,12 @@ fitparse + StandardUnitsDataProcessor → extract fields from selected message t
 detect hardware and analyze records by sport → plan_output_paths (build basename, find next index) →
 render conditional Markdown → extract_gps_points → if any: build_gpx in memory →
 export_activity: stage outputs and exact source copy → back up existing outputs →
-publish Markdown/GPX/archive → remove source last; restore outputs on handled error
+publish Markdown/GPX/archive → remove source last; restore outputs on handled error →
+after export success: validate/upsert/sort history → atomic replacement of history
 ```
 
 Core functions in `extractor.py`:
-- `parse_fit()` — generic extraction iterating all fields (never hardcode field lists)
+- `parse_fit(path, *, include_history_id=False)` — generic extraction; optional `history` metadata with SHA-256 of decompressed bytes or a hashing error, without rereading the FIT
 - `detect_device()` — reads `device_info.manufacturer`; sections mostly depend on available data
 - `compute_hrv()` — calculates RMSSD and SDNN from raw RR intervals
 - `format_markdown()` — assembles output with conditional sections
@@ -88,6 +95,15 @@ Core functions in `file_manager.py`:
 - `plan_archive_path()` — preserves `.fit.gz`, adds `_dupN` on archive collision, detects source already archived
 - `export_activity()` — coordinates publication and archival with rollback; used by the CLI
 - `move_processed_fit()` — standalone archive helper, not the CLI transaction
+- `activity_history_path()` — global registry under `EXPORT_DIR`, regardless of `--output`
+- `update_activity_history(entry, md_target)` — read/validate history, prepare relative links, invalidate reused links, atomically publish through a temporary file in the same directory
+
+`activity_history.py` exposes `HistoryEntry`, `build_history_entry`, `parse_history`,
+`render_history` and `upsert_history`. Entries keep rounded presentation values;
+UTC start dates retain available precision. The fixed v1 table stores SHA-256 IDs
+in HTML comments even when links are missing, and ends with a row-count marker.
+Sort newest first, then IDs ascending; undated entries last. Date fallback uses
+the first valid record timestamp, never naming helpers or the current date.
 
 Core functions in `gpx_exporter.py`:
 - `extract_gps_points()` — filters records to valid lat/lon entries, normalises to a list of `{timestamp, lat, lon, ele, heart_rate, speed}` dicts
@@ -105,6 +121,8 @@ Core functions in `gpx_exporter.py`:
 - **`None` → `"-"`** — missing data is extremely common across hardware; always fallback gracefully
 - **Never write a decompressed `.fit` to disk** — `.fit.gz` is decompressed in memory only (the archive move preserves `.fit.gz`)
 - **Refuse to overwrite `.md` via `--output`** without `--force` flag. In auto mode, the index auto-increments so no `--force` needed.
+- **History is the sole automatic Markdown replacement**: validate the v1 format first, refuse symlinks, preserve invalid bytes and update only after export success. Reserve its path against individual exports, even with `--force`.
+- **History is outside the export transaction**: history errors keep exit code 0; an old link may become stale after a forced export whose history update fails. No locking, repair, backfill or session-level deduplication beyond identical FIT bytes.
 - **All labels in French** — section titles and metric names
 - **All file-path / naming / archival logic lives in `file_manager.py`** — keep `extractor.py` focused on parsing + formatting + orchestration
 - **All GPS-extraction / GPX-building logic lives in `gpx_exporter.py`** — keep `extractor.py` thin
@@ -121,7 +139,9 @@ Core functions in `gpx_exporter.py`:
 
 ## Validation
 
-No automated test suite or CI is checked in, and there is no `examples/` directory.
+Run `.venv/bin/python -B -m unittest discover -s tests -v` for history unit and
+integration tests, including injected I/O failures and export rollback. No CI,
+`examples/` directory or personal FIT fixtures are checked in.
 Check `python -B extractor.py --help` and `--stdout` with/without `--details` on
 appropriate FIT files when available. Exercise writes and injected failures only
 with synthetic data or copies in temporary directories (`unittest.mock`, `tempfile`).
@@ -148,3 +168,4 @@ Sections only appear when the relevant data exists:
 ## Spec
 
 Full technical specification (decision rationale, output schema, known limitations): `docs/SPEC.md`.
+History format and behavior: `docs/historique_activites.md`.

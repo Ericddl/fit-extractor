@@ -16,6 +16,7 @@ import/Trail_le_matin.fit
 export/2026-05-14_running_trail_001.md    ← Markdown pour l'IA
 export/2026-05-14_running_trail_001.gpx   ← trace GPS complète
 export/2026-05-14_running_trail_001.fit   ← source archivée
+export/historique_activites.md          ← tableau des activités pour le coaching
 ```
 
 ## Pourquoi
@@ -65,7 +66,8 @@ Après traitement d'un fichier `.fit` :
 1. le `.md` est généré dans `export/` ;
 2. un `.gpx` (trace GPS complète, GPX 1.1) est généré dans `export/` si le FIT contient des points GPS exploitables ;
 3. le `.fit` source est archivé dans `export/`, puis supprimé de son emplacement initial uniquement après publication réussie de toutes les sorties ;
-4. les trois fichiers partagent le basename `YYYY-MM-DD_<activité>_<indice>`, sauf suffixe `_dupN` sur une archive en conflit.
+4. les trois fichiers partagent le basename `YYYY-MM-DD_<activité>_<indice>`, sauf suffixe `_dupN` sur une archive en conflit ;
+5. après cet export, le registre global `export/historique_activites.md` est mis à jour.
 
 Une activité sans GPS (intérieur, home trainer) ne produit que le `.md` ; un message explicite l'indique. Les fichiers `.fit.gz` sont décompressés **en mémoire uniquement** (jamais sur disque) et conservent leur extension `.fit.gz` à l'archivage.
 
@@ -76,6 +78,36 @@ concernés et le dossier `.fit-export-*` contenant les sauvegardes à récupére
 Les dossiers créés peuvent rester présents après un échec. Cette protection concerne
 les erreurs gérées pendant une exécution isolée, pas une coupure électrique, un arrêt
 forcé ou des conversions concurrentes vers les mêmes destinations.
+
+### Historique des activités
+
+Chaque conversion alimente automatiquement un tableau Markdown pour le coaching :
+début UTC, sport, distance, durée chronométrée, D+, FC moyenne/maximale, TSS, TE
+aérobie et lien vers la séance. Les métriques viennent du FIT ; les données absentes
+restent `-`. Les activités récentes apparaissent en premier, même si les fichiers
+sont traités dans le désordre.
+
+Le même FIT renommé ou compressé en `.fit.gz` conserve une seule ligne grâce à
+l’empreinte de son contenu décompressé. Une reconversion actualise cette ligne et
+son lien, mais peut toujours produire de nouveaux fichiers individuels et archives.
+Deux FIT différents restent distincts, même s’ils décrivent la même séance.
+
+Le registre reste dans `export/`, y compris avec `--output` ailleurs ; ses liens
+sont relatifs à ce dossier. Son format est généré : ne pas modifier manuellement
+le tableau ou ses commentaires techniques. Il est remplacé automatiquement sans
+`--force` ; son chemin est réservé et ne peut pas servir de sortie individuelle.
+`--stdout` ne calcule aucune empreinte et n’accède pas au registre.
+
+Un échec du seul historique conserve l’export réussi et le **code 0**, avec un
+avertissement sur `stderr` et le chemin de l’archive utilisable pour une reprise.
+Un registre invalide ou symbolique est préservé. Après `--force`, cet échec peut
+laisser un ancien lien vers une séance remplacée. En cas de mise à jour réussie,
+l’ancienne ligne conserve ses métriques et perd ce lien.
+
+Le registre couvre les nouvelles conversions : aucune reprise automatique des
+exports existants, aucun calcul de charge ni réparation automatique. Supprimer le
+registre fait repartir d’un historique vide. Traiter les fichiers séquentiellement ;
+une interruption entre export et historique peut laisser une séance non inscrite.
 
 ## Utilisation
 
@@ -105,6 +137,7 @@ désignent la source, se confondent entre elles ou sont des liens symboliques so
 
 Codes de sortie : **0** succès, **1** erreur de lecture, rendu ou export, **2** arguments
 invalides. `--gps-limit 0` est refusé même sans `--gps`, avant toute lecture du FIT.
+Un échec limité à l’historique produit un avertissement et conserve le code **0**.
 
 ### Exemples
 
@@ -279,13 +312,14 @@ matériels dépend des messages disponibles et du support de `fitparse`.
 
 ## Architecture
 
-Quatre modules, sans framework :
+Cinq modules, sans framework :
 
 | Module | Rôle |
 |---|---|
 | [`extractor.py`](extractor.py) | Parsing FIT, calcul HRV, formatage Markdown, CLI |
 | [`activity_analysis.py`](activity_analysis.py) | Calculs purs : unités, allures, kilomètres, terrain et qualité |
-| [`file_manager.py`](file_manager.py) | Chemins, nommage `YYYY-MM-DD_<activité>_<indice>`, archivage du `.fit` |
+| [`activity_history.py`](activity_history.py) | Entrées, validation, tri et rendu du registre Markdown, sans accès disque |
+| [`file_manager.py`](file_manager.py) | Chemins, nommage, archivage du `.fit`, publication séparée du registre |
 | [`gpx_exporter.py`](gpx_exporter.py) | Extraction des points GPS, génération du GPX 1.1 (`xml.etree.ElementTree`) |
 
 ## Documentation
@@ -295,6 +329,7 @@ Quatre modules, sans framework :
 | [`docs/SPEC.md`](docs/SPEC.md) | Spécification technique complète : schéma de sortie, rationale des décisions, limitations connues |
 | [`docs/file_manager_change.md`](docs/file_manager_change.md) | Spec de l'évolution « dossiers `import/` → `export/` » |
 | [`docs/gpx.md`](docs/gpx.md) | Spec de l'évolution « export GPX » |
+| [`docs/historique_activites.md`](docs/historique_activites.md) | Format et règles de l’historique local des activités |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Comment contribuer, invariants à respecter |
 | [`AGENTS.md`](AGENTS.md) | Instructions et référence pour Codex |
 | [`CLAUDE.md`](CLAUDE.md) | Contexte destiné aux assistants de code (Claude Code) |

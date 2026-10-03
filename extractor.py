@@ -3,6 +3,7 @@
 
 import argparse
 import gzip
+import hashlib
 import io
 import math
 import sys
@@ -12,11 +13,13 @@ from pathlib import Path
 from fitparse import FitFile, StandardUnitsDataProcessor
 
 from activity_analysis import activity_speed, analyze_records, numeric_field, preferred_number
+from activity_history import build_history_entry
 from file_manager import (
     ensure_workdirs,
     export_activity,
     plan_output_paths,
     resolve_input_path,
+    update_activity_history,
     IMPORT_DIR,
 )
 from gpx_exporter import (
@@ -26,7 +29,7 @@ from gpx_exporter import (
 )
 
 
-def parse_fit(path: Path) -> dict:
+def parse_fit(path: Path, *, include_history_id: bool = False) -> dict:
     raw = path.read_bytes()
     if path.name.lower().endswith(".fit.gz"):
         raw = gzip.decompress(raw)
@@ -49,6 +52,12 @@ def parse_fit(path: Path) -> dict:
         "user_profile": {},
         "zones_target": {},
     }
+
+    if include_history_id:
+        try:
+            data["history"] = {"activity_id": hashlib.sha256(raw).hexdigest(), "error": None}
+        except Exception as error:
+            data["history"] = {"activity_id": None, "error": str(error)}
 
     for msg in fitfile.get_messages("session"):
         data["session"].update(extract_fields(msg))
@@ -860,7 +869,7 @@ def main():
         sys.exit(1)
 
     try:
-        data = parse_fit(input_path)
+        data = parse_fit(input_path, include_history_id=not args.stdout)
     except Exception as e:
         print(f"Erreur lors du parsing FIT : {e}", file=sys.stderr)
         sys.exit(1)
@@ -873,6 +882,13 @@ def main():
         if args.stdout:
             print(markdown)
             return
+        history_entry = None
+        history_error = data["history"]["error"]
+        if history_error is None:
+            try:
+                history_entry = build_history_entry(data, data["history"]["activity_id"])
+            except Exception as error:
+                history_error = str(error)
         if args.output:
             md_path = args.output
         else:
@@ -891,6 +907,15 @@ def main():
     else:
         print("Aucun point GPS exploitable trouvé : GPX non généré.", file=sys.stderr)
     print(f"Archive FIT : {final_fit}", file=sys.stderr)
+
+    if history_entry is not None:
+        try:
+            update_activity_history(history_entry, md_path)
+        except Exception as error:
+            history_error = str(error)
+    if history_error is not None:
+        print(f"Attention : historique des activités non mis à jour : {history_error}.", file=sys.stderr)
+        print(f"Archive disponible pour reprise : {final_fit}.", file=sys.stderr)
 
 
 if __name__ == "__main__":

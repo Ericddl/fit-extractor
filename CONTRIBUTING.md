@@ -18,7 +18,15 @@ Ouvrez une [issue](https://github.com/Ericddl/fit-extractor/issues) en précisan
 2. Testez votre modification sur un vrai `.fit` — idéalement une activité outdoor **et** une activité indoor (sans GPS).
 3. Ouvrez une pull request en décrivant le comportement avant / après.
 
-Aucune suite de tests automatisés n'existe à ce jour. La vérification manuelle minimale :
+La suite de tests de l’historique utilise `unittest`, sans dépendance supplémentaire :
+
+```bash
+.venv/bin/python -B -m unittest discover -s tests -v
+```
+
+Elle vérifie le format, les métriques, le tri, la déduplication, les chemins,
+les avertissements et les erreurs d’écriture/archivage sur données synthétiques.
+Elle ne remplace pas les contrôles matériels et sportifs. Vérification manuelle minimale :
 
 ```bash
 python3 -B extractor.py --help
@@ -41,6 +49,13 @@ Les contrôles ponctuels peuvent utiliser `unittest.mock` et `tempfile` de la st
 Vérifier les limites GPS invalides (code 2, avant parsing), les échecs d’export
 (code 1), l’absence de doublons en mode détaillé et la stabilité du rendu standard.
 Documenter les commandes exécutées et ce qui n’a pas pu être vérifié.
+
+Pour l’historique, vérifier aussi la stabilité lecture/rendu, les caractères
+spéciaux dans les liens, les dates UTC et les identifiants FIT/gzip. Un échec du
+registre après export doit conserver les fichiers produits, l’ancien registre
+octet pour octet et le code 0, avec la cause et le chemin effectif de l’archive.
+Un `--output` vers le registre est refusé avant publication (code 1). Vérifier
+l’absence d’accès à l’historique et de calcul d’empreinte avec `--stdout`.
 
 Les analyses sportives sont incluses par défaut. Pour les valider, construire des
 records synthétiques avec distances et horodatages connus : limites kilométriques,
@@ -68,10 +83,11 @@ Ces règles portent la conception du projet — une PR qui les enfreint sera ref
 - **HRV : RMSSD et SDNN uniquement** — jamais les intervalles RR bruts, qui dépassent 10 000 points.
 - **`None` → `"-"`** : une donnée manquante ne doit jamais faire échouer le rendu.
 - **Ne jamais écrire un `.fit` décompressé sur disque** : un `.fit.gz` est décompressé en mémoire.
-- **Ne jamais écraser un fichier existant** sans `--force`.
+- **Ne jamais écraser un fichier existant** sans `--force`, sauf le registre généré `export/historique_activites.md`, remplacé atomiquement après validation.
 - **Tous les labels de sortie en français.**
-- **Séparation des modules** : chemins / nommage / archivage dans `file_manager.py`, GPS / GPX dans `gpx_exporter.py`, calculs sportifs purs dans `activity_analysis.py`, parsing + formatage + CLI dans `extractor.py`.
+- **Séparation des modules** : chemins / nommage / archivage / publication du registre dans `file_manager.py`, GPS / GPX dans `gpx_exporter.py`, calculs sportifs purs dans `activity_analysis.py`, transformations pures du registre dans `activity_history.py`, parsing + formatage individuel + CLI dans `extractor.py`.
 - **Publier et archiver via `export_activity()`** : annuler les sorties et restaurer les anciennes en cas d’erreur gérée, archivage compris. Ne supprimer la source qu’en dernier.
+- **Historique après export** : ne pas étendre cette transaction au registre ; conserver les identifiants cachés même sans lien, refuser les formats invalides et versions inconnues sans modifier leurs octets.
 - **`--details` reste optionnel** : pas de RR bruts ni de séries intégrales ; moyennes d’échantillons explicitement non pondérées.
 - **Analyses par défaut** : FC pondérée par les durées valides, dénivelé signalé comme estimé ; aucune interpolation à travers une interruption, aucune assimilation du chronomètre au mouvement réel.
 
