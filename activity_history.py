@@ -241,8 +241,41 @@ def upsert_history(
         for old in entries if old.activity_id != entry.activity_id
     ]
     result.append(entry)
+    return sort_history(result)
+
+
+def sort_history(entries: list[HistoryEntry]) -> list[HistoryEntry]:
+    """Classe les entrées sans modifier la liste fournie."""
+    result = list(entries)
     result.sort(key=lambda item: item.activity_id)
     result.sort(key=lambda item: item.start or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     # Une vraie date minimale reste avant les dates absentes.
     result.sort(key=lambda item: item.start is None)
     return result
+
+
+def recover_history(text: str) -> tuple[list[HistoryEntry], list[str]]:
+    """Récupère les lignes v1 valides ; réservé à la synchronisation explicite."""
+    versions = re.findall(r"<!--\s*fit-extractor-history:(v[^\s>\-]+)", text)
+    if any(version != "v1" for version in versions):
+        raise ValueError("Version d’historique inconnue : réparation refusée")
+    entries = {}
+    warnings = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line or line in _HEADER or line.startswith("<!-- fit-extractor-history:end"):
+            continue
+        try:
+            if "\ufffd" in line:
+                raise ValueError("Ligne contenant des octets irrécupérables")
+            entry = _parse_row(line)
+        except ValueError:
+            warnings.append(f"Ligne {number} irrécupérable (conservée dans la sauvegarde)")
+            continue
+        if entry.activity_id in entries:
+            # Deux lignes contradictoires ne permettent pas de choisir un lien.
+            previous = entries[entry.activity_id]
+            entries[entry.activity_id] = replace(previous, link=None)
+            warnings.append(f"Ligne {number} : identifiant répété, lien retiré")
+        else:
+            entries[entry.activity_id] = entry
+    return sort_history(list(entries.values())), warnings

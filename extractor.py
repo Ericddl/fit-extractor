@@ -20,6 +20,7 @@ from file_manager import (
     plan_output_paths,
     resolve_input_path,
     update_activity_history,
+    activity_write_lock,
     IMPORT_DIR,
 )
 from gpx_exporter import (
@@ -29,12 +30,11 @@ from gpx_exporter import (
 )
 
 
-def parse_fit(path: Path, *, include_history_id: bool = False) -> dict:
+def parse_fit(path: Path, *, include_history_id: bool = False,
+              skip_history_ids: frozenset[str] = frozenset()) -> dict:
     raw = path.read_bytes()
     if path.name.lower().endswith(".fit.gz"):
         raw = gzip.decompress(raw)
-
-    fitfile = FitFile(io.BytesIO(raw), data_processor=StandardUnitsDataProcessor())
 
     def extract_fields(msg):
         result = {}
@@ -58,6 +58,11 @@ def parse_fit(path: Path, *, include_history_id: bool = False) -> dict:
             data["history"] = {"activity_id": hashlib.sha256(raw).hexdigest(), "error": None}
         except Exception as error:
             data["history"] = {"activity_id": None, "error": str(error)}
+        if data["history"]["activity_id"] in skip_history_ids:
+            data["already_exported"] = True
+            return data
+
+    fitfile = FitFile(io.BytesIO(raw), data_processor=StandardUnitsDataProcessor())
 
     for msg in fitfile.get_messages("session"):
         data["session"].update(extract_fields(msg))
@@ -857,13 +862,21 @@ def format_markdown(
 
 
 def main():
+    from batch_processing import parse_jobs, run_batch, sync_history
+
     parser = argparse.ArgumentParser(
         description="Convertir un fichier .fit en Markdown pour le coaching IA."
     )
     parser.add_argument(
-        "input", type=Path,
+        "input", type=Path, nargs="?",
         help="Fichier .fit ou .fit.gz (nom seul = recherché dans import/)"
     )
+    parser.add_argument("--batch", type=Path, metavar="DOSSIER",
+                        help="Convertir récursivement les FIT/FIT.gz d’un dossier")
+    parser.add_argument("--jobs", type=parse_jobs, metavar="auto|all|N",
+                        help="Processus du batch : auto (défaut, maximum 4), all ou entier positif")
+    parser.add_argument("--sync-history", action="store_true",
+                        help="Compléter ou réparer l’historique depuis les FIT archivés")
     parser.add_argument(
         "--output", type=Path,
         help="Chemin du .md de sortie (sinon export/YYYY-MM-DD_<activité>_<indice>.md)"
@@ -884,6 +897,38 @@ def main():
     )
     args = parser.parse_args()
 
+    if sum((args.input is not None, args.batch is not None, args.sync_history)) != 1:
+        parser.error("choisir un fichier, --batch DOSSIER ou --sync-history")
+    if args.jobs is not None and args.batch is None:
+        parser.error("--jobs nécessite --batch")
+    if (args.batch is not None or args.sync_history) and (args.stdout or args.output or args.force):
+        parser.error("--stdout, --output et --force sont réservés à un fichier individuel")
+    if args.sync_history and (args.details or args.gps or args.gps_limit != 30):
+        parser.error("les options de rendu ne s’appliquent pas à --sync-history")
+
+    try:
+        if args.stdout:
+            _run_single(args)
+        else:
+            with activity_write_lock():
+                if args.batch is not None:
+                    code = run_batch(args.batch, args.jobs or parse_jobs("auto"),
+                                     details=args.details, gps=args.gps, gps_limit=args.gps_limit)
+                    if code:
+                        sys.exit(code)
+                elif args.sync_history:
+                    sync_history()
+                else:
+                    _run_single(args)
+    except Exception as error:
+        print(f"Erreur : {error}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("Traitement interrompu.", file=sys.stderr)
+        sys.exit(130)
+
+
+def _run_single(args):
     input_path = resolve_input_path(args.input)
     if not input_path.exists():
         print(

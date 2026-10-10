@@ -1,5 +1,10 @@
 # Spécification — Lot 1 : historique local des activités
 
+> Évolution : cette spécification décrit le lot initial. Le batch, le verrou commun
+> et la synchronisation/réparation explicite sont désormais livrés et décrits dans
+> [batch.md](batch.md), qui remplace les anciennes exclusions correspondantes.
+> Le format v1, les unités, les identifiants et les règles de tri restent inchangés.
+
 **Projet :** `fit-extractor`
 
 **Date :** 2 octobre 2026

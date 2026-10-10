@@ -51,6 +51,7 @@ L'utilisateur colle le Markdown dans une IA de coaching. Le Markdown doit donc �
 ```
 fit-extractor/
 ├── extractor.py          # Script principal, point d'entrée CLI
+├── batch_processing.py   # Coordination du batch parallèle et de la synchronisation
 ├── activity_analysis.py  # Calculs sportifs purs, sans accès disque
 ├── activity_history.py   # Entrées et format du registre, sans accès disque
 ├── file_manager.py       # Résolution des chemins, nommage, déplacement
@@ -190,8 +191,8 @@ import/fichier.fit (.gz)
 ### Historique local des activités
 
 Le registre reste dans `export/historique_activites.md`, même avec `--output`
-ailleurs. Il couvre les conversions nouvellement inscrites, sans reprise automatique
-des exports antérieurs. Les données de séance sont utilisées sans relire les
+ailleurs. Il couvre les conversions inscrites et les archives reprises explicitement
+avec `--sync-history` (voir [batch.md](batch.md)). Les données de séance sont utilisées sans relire les
 Markdown ni recalculer D+, FC, TSS ou TE. Début : `session.start_time`, sinon premier
 `record.timestamp` valide ; dates naïves interprétées en UTC, aucune date d’import.
 
@@ -202,7 +203,9 @@ croissant à égalité, dates absentes en dernier. Les collisions de fichiers in
 gardent leurs règles actuelles. Si une destination est réutilisée par une autre
 activité, l’ancienne ligne perd son lien mais garde son identité et ses métriques.
 
-Lire et valider le registre uniquement après `export_activity()` réussi. Refuser
+En conversion individuelle, lire et valider le registre uniquement après
+`export_activity()` réussi. Le batch le valide aussi avant les conversions pour
+la déduplication, puis fusionne les exports réussis en une seule publication. Refuser
 les versions inconnues, lignes invalides, doublons d’identifiants, marqueurs finaux
 incohérents et liens symboliques sans modifier les octets existants. Rendre en mémoire,
 écrire un temporaire dans le même dossier, fermer puis remplacer avec `os.replace()`.
@@ -211,8 +214,9 @@ sortie individuelle qui le désigne est refusée avant publication (code 1).
 
 Une erreur propre à l’historique, y compris le hachage, conserve l’export réussi
 et le code 0, avec avertissement et chemin de l’archive réelle pour reprise.
-`--stdout` ignore complètement l’historique. Imports séquentiels uniquement,
-sans verrouillage ni réparation automatique. Un arrêt après export peut laisser
+`--stdout` ignore complètement l’historique et le verrou. Les commandes d’écriture
+sont protégées par un verrou commun. Le batch parallélise les calculs et centralise
+les publications ; `--sync-history` complète le registre ou le répare après sauvegarde. Un arrêt après export peut laisser
 une entrée absente ; un échec après `--force` peut laisser un lien périmé.
 
 ### Règles de parsing
@@ -724,7 +728,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - **Les extensions propriétaires GPX (FC, vitesse, cadence)** sont hors périmètre V1
 - **Restaurer les sorties sur erreur gérée, archivage compris** ; conserver les sauvegardes si la restauration échoue
 - **`--details` ne change pas le rendu par défaut** ; aucun ajout de séries brutes
-- **L’historique reste hors de la transaction d’export** ; ne pas lire son contenu avant succès, ne pas toucher aux sorties après un échec du registre
+- **L’historique reste hors de la transaction d’export** ; lecture après succès en mode individuel, prélecture pour déduplication en batch ; ne pas toucher aux sorties après un échec du registre
 
 ---
 
@@ -738,8 +742,8 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - Pas de correction ni d'interpolation des points GPS manquants
 - Pas d'import du GPX dans Strava/Garmin/Suunto/autre plateforme
 - Pas d'envoi automatique à une IA (pas d'appel API ChatGPT/Claude depuis le script)
-- Pas de traitement batch multi-fichiers (une seule activité par appel) — explicitement hors périmètre de l'évolution `file_manager`
-- Pas de reconstruction d’un index des exports déjà présents ; le registre global est alimenté uniquement par les nouvelles conversions
+- Batch multi-fichiers disponible via `--batch` ; chaque FIT reste une seule activité, sans prise en charge multisession
+- Reprise des archives existantes et réparation du registre uniquement sur demande avec `--sync-history`, après sauvegarde si le registre est cassé
 - Pas de suppression automatique des fichiers présents dans `export/`
 - Pas d'interface GUI
 - Pas de frontmatter YAML Obsidian/Dataview (à envisager en v2)
@@ -751,10 +755,10 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - [ ] Validation indoor sur matériel réel limitée ; absence de GPS vérifiable par données synthétiques
 - [ ] `feeling` (ressenti Suunto 1-5) : mapping valeur numérique → libellé non documenté
 - [ ] Multi-session FIT (triathlon) : non géré — hypothèse 1 session par fichier
-- [ ] Batch processing non prévu
+- [x] Batch parallèle, reprises par empreinte et synchronisation/réparation explicite du registre
 - [ ] Couverture automatisée : historique, intégration d’export, dénivelé et montées ; autres analyses sportives et compatibilité matérielle à compléter selon `CONTRIBUTING.md`
-- [ ] Pas de reprise après arrêt brutal ni coordination d’exports concurrents
-- [ ] Historique potentiellement incomplet après erreur ou arrêt ; aucun mécanisme de réparation ou de reprise de l’existant
+- [ ] Pas de transaction durable après arrêt brutal ; reprise du registre avec `--sync-history`. Verrou commun aux commandes d’écriture de cette version
+- [ ] Historique potentiellement incomplet après erreur ou arrêt ; reprise explicite depuis les archives avec `--sync-history`
 
 Suite actuelle : `.venv/bin/python -B -m unittest discover -s tests -v`.
 Tests synthétiques avec `unittest.mock` et `tempfile`, sans FIT personnel versionné.
@@ -781,7 +785,7 @@ partielles, coupures, régressions, distances répétées et rendu réservé au 
 
 ## 13. Next Improvements
 
-- Mode **batch** : traiter un dossier entier de `.fit` → un `.md` par activité
+- Mode **batch** livré : dossier récursif FIT/FIT.gz, `--jobs auto|all|N`, déduplication et mise à jour finale du registre ; détails dans [batch.md](batch.md)
 - Option `--format obsidian` : frontmatter YAML + naming `YYYY-MM-DD_sport_distance.md`
 - Option `--lang en` : labels en anglais pour coaching avec IA anglophone
 - Calcul de la **charge hebdomadaire** si plusieurs fichiers fournis

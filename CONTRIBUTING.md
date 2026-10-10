@@ -18,6 +18,7 @@ Ouvrez une [issue](https://github.com/Ericddl/fit-extractor/issues) en précisan
 2. Testez votre modification sur un vrai `.fit` — idéalement une activité outdoor **et** une activité indoor (sans GPS).
 3. Ouvrez une pull request en décrivant le comportement avant / après.
 
+Les règles de batch et de réparation explicite sont dans [docs/batch.md](docs/batch.md).
 La suite de tests utilise `unittest`, sans dépendance supplémentaire :
 
 ```bash
@@ -97,7 +98,8 @@ Ces règles portent la conception du projet — une PR qui les enfreint sera ref
 - **Tous les labels de sortie en français.**
 - **Séparation des modules** : chemins / nommage / archivage / publication du registre dans `file_manager.py`, GPS / GPX dans `gpx_exporter.py`, calculs sportifs purs dans `activity_analysis.py`, transformations pures du registre dans `activity_history.py`, parsing + formatage individuel + CLI dans `extractor.py`.
 - **Publier et archiver via `export_activity()`** : annuler les sorties et restaurer les anciennes en cas d’erreur gérée, archivage compris. Ne supprimer la source qu’en dernier.
-- **Historique après export** : ne pas étendre cette transaction au registre ; conserver les identifiants cachés même sans lien, refuser les formats invalides et versions inconnues sans modifier leurs octets.
+- **Historique après export** : ne pas étendre cette transaction au registre ; conserver les identifiants cachés même sans lien. Le batch prévalide le registre pour dédupliquer, puis publie les entrées réussies en une seule écriture. Seul `--sync-history` répare un registre invalide, après sauvegarde exacte ; les versions inconnues restent refusées.
+- **Écritures coordonnées** : toutes les CLI d’écriture utilisent le verrou commun ; les travailleurs batch ne publient rien. Tester également les reprises gzip, les erreurs partielles, Ctrl+C et la réparation d’une ligne supprimée avec sauvegarde octet pour octet.
 - **`--details` reste optionnel** : pas de RR bruts ni de séries intégrales ; moyennes d’échantillons explicitement non pondérées.
 - **Analyses par défaut** : FC pondérée par les durées valides, dénivelé signalé comme estimé ; aucune interpolation à travers une interruption, aucune assimilation du chronomètre au mouvement réel.
 

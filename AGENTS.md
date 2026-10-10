@@ -8,7 +8,8 @@ Le traitement est local, sans appel réseau ni API d’IA.
 
 - `README.md` : installation et usage ; `CONTRIBUTING.md` : contributions.
 - `docs/SPEC.md` : spécification principale, décisions et limites connues.
-- `docs/historique_activites.md` : format et règles de l’historique local.
+- `docs/historique_activites.md` : format et règles initiales de l’historique local.
+- `docs/batch.md` : règles actuelles du batch, du verrou et de la réparation explicite.
 - `docs/file_manager_change.md` et `docs/gpx.md` : spécifications historiques,
   dont certaines propositions diffèrent du code livré.
 - `docs/SPEC_template.md` : modèle de document.
@@ -17,6 +18,8 @@ Le traitement est local, sans appel réseau ni API d’IA.
 ## Architecture et dépendances
 
 - `extractor.py` : CLI `argparse`, parsing FIT, calcul HRV et rendu Markdown.
+- `batch_processing.py` : travailleurs de calcul et coordination batch/synchronisation.
+  Les publications restent centralisées via `file_manager.py`.
 - `activity_analysis.py` : calculs purs d’allure, kilomètres, montées, terrain et qualité, sans accès disque.
 - `activity_history.py` : entrées, relecture, validation, tri et rendu du registre, sans accès disque.
 - Les séries des graphiques Unicode sont échantillonnées dans `activity_analysis.py` ;
@@ -36,7 +39,7 @@ en tenant compte des fichiers `.md`, `.fit`, `.fit.gz` et `.gpx` existants.
 
 Repères dans le code :
 
-- `parse_fit(path, *, include_history_id=False)` extrait les messages `session`,
+- `parse_fit(path, *, include_history_id=False, skip_history_ids=frozenset())` extrait les messages `session`,
   `lap`, `record`, `hrv`, `device_info`, `user_profile` et `zones_target` ; le rendu
   sélectionne ensuite les données utiles. `detect_device()` lit le fabricant ;
   la présence des champs détermine les sections, pas une matrice rigide par appareil.
@@ -173,8 +176,9 @@ personnel versionné.
 - Décompresser uniquement en mémoire ; préserver l’extension composée `.fit.gz`
   à l’archivage (`name.lower().endswith(".fit.gz")`).
 - Historique : SHA-256 des octets FIT décompressés, sans seconde lecture pour le
-  hachage. Conserver les identifiants cachés même sans lien. Ne pas réparer ou
-  écraser un registre invalide, symbolique ou d’une version inconnue.
+  hachage. Conserver les identifiants cachés même sans lien. Un registre invalide
+  est préservé en conversion ; seul `--sync-history` peut le réparer après sauvegarde
+  exacte. Les registres symboliques et versions inconnues restent refusés.
   Le tableau v1 conserve dix colonnes fixes, des valeurs de présentation arrondies
   et un marqueur final avec le nombre de lignes. Trier par début UTC décroissant,
   puis identifiant croissant ; placer les dates absentes à la fin. Le début vient
@@ -186,18 +190,28 @@ personnel versionné.
   Une sortie qui désigne le registre est refusée avant publication, même avec `--force`.
   Les liens sont relatifs au registre et encodés dans le Markdown. Si une sortie
   est réaffectée, retirer l’ancien lien en conservant l’identité et les métriques.
-  Aucun indexage automatique des exports existants ni réparation n’est prévu.
+  `--sync-history` reprend explicitement les archives de `export/`, réintroduit
+  les lignes supprimées et répare un registre cassé après sauvegarde. Ne jamais
+  inventer un lien pour une famille `_dupN` ambiguë ; préserver les lignes valides
+  dont les archives sont ailleurs. Une archive illisible empêche la publication.
   Une erreur ou un arrêt après export peut laisser une entrée absente ; après
   `--force`, un échec du registre peut laisser un lien périmé.
 - Utiliser `export_activity()` pour le lot Markdown/GPX/archive ; supprimer la
   source en dernier et restaurer les sorties sur erreur gérée. Conserver les
   sauvegardes et signaler leurs chemins si la restauration échoue elle-même.
-  Cette protection ne couvre ni arrêt brutal ni écritures concurrentes.
+  Cette protection ne couvre pas les arrêts brutaux. Les CLI d’écriture utilisent
+  `activity_write_lock()` ; ne pas supprimer son fichier persistant.
 - GPX : latitude/longitude valides, altitude et heure si disponibles ; pas
   d’extensions FC, cadence ou puissance, ni de fichier sans points exploitables.
 - Ne jamais versionner les données sportives personnelles. `import/`, `export/`
   et les formats d’activité sont ignorés ; seuls leurs `.gitkeep` sont suivis.
-- Limites actuelles : une activité par appel, multisession non gérée, validation
+- Batch : inventaire récursif stable, pas de liens symboliques ; tâches bornées,
+  calculs parallèles et publications séquentielles. `--jobs auto` = maximum 4 CPU
+  disponibles ; `all` = CPU logiques disponibles ; entier positif accepté.
+  Valider le registre avant le batch, ignorer les identités avec un Markdown présent,
+  fusionner seulement les exports réussis en une seule écriture finale. Les doublons
+  ignorés restent dans le dossier source. Ctrl+C : inscrire les succès puis code 130.
+- Limites actuelles : une activité par FIT, multisession non gérée, validation
   indoor limitée ; ne pas élargir ce périmètre sans demande.
 - Suivre les Conventional Commits, habituellement en français, sauf message
   explicitement demandé par l’utilisateur.

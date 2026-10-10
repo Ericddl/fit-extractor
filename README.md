@@ -105,10 +105,50 @@ Un registre invalide ou symbolique est préservé. Après `--force`, cet échec 
 laisser un ancien lien vers une séance remplacée. En cas de mise à jour réussie,
 l’ancienne ligne conserve ses métriques et perd ce lien.
 
-Le registre couvre les nouvelles conversions : aucune reprise automatique des
-exports existants, aucun calcul de charge ni réparation automatique. Supprimer le
-registre fait repartir d’un historique vide. Traiter les fichiers séquentiellement ;
-une interruption entre export et historique peut laisser une séance non inscrite.
+Le registre peut être complété ou réparé sur demande avec `--sync-history`, depuis
+les FIT archivés dans `export/`. Une ligne supprimée à la main sera réintroduite si
+son FIT est toujours présent. Un registre cassé est sauvegardé avant réparation.
+Une interruption entre export et historique peut laisser une séance non inscrite :
+lancer la synchronisation avant de reprendre un batch.
+
+### Importer un export Strava complet
+
+Décompresser l’export Strava, puis travailler sur une **copie** de son dossier
+d’activités : les nouveaux FIT traités sont archivés dans `export/` et retirés du
+dossier source. Les doublons ignorés restent à leur emplacement.
+
+```bash
+# Une première fois : inscrire les anciens exports, ou réparer le registre
+python3 extractor.py --sync-history
+
+# Import récursif ; les FIT déjà inscrits avec un Markdown présent sont ignorés
+python3 extractor.py --batch chemin/copie-activites/
+
+# Régler le nombre de processus
+python3 extractor.py --batch chemin/copie-activites/ --jobs 8
+python3 extractor.py --batch chemin/copie-activites/ --jobs all
+```
+
+Le mode `auto` par défaut utilise au maximum quatre processus, limités aux CPU
+disponibles. `all` utilise un processus par processeur logique disponible ; cela
+peut augmenter fortement la consommation mémoire. Les calculs sont parallèles,
+la publication est centralisée et l’historique est mis à jour une seule fois,
+après les exports réussis. Il est inutile d’ajouter `&` ou une boucle shell.
+
+`--details` n’est pas nécessaire pour le registre ; les analyses sportives restent
+incluses sans cette option. La déduplication compare les octets FIT décompressés,
+pas les noms ni les dates : un FIT renommé ou compressé reste la même activité.
+Les autres formats Strava (GPX, TCX, CSV…) sont ignorés.
+
+Un verrou commun refuse les autres commandes d’écriture pendant le traitement ;
+`--stdout` reste utilisable. Un FIT défectueux n’arrête pas les autres conversions.
+Le bilan distingue exports, doublons, erreurs et fichiers non traités.
+Un registre cassé bloque le batch avec une invitation à lancer `--sync-history`.
+
+La synchronisation ne régénère pas les Markdown/GPX et ne déplace aucune archive.
+Elle signale les liens manquants ou ambigus, notamment les archives `_dupN` ; une
+activité peut être inscrite sans lien. Les versions inconnues et les registres
+symboliques restent refusés. Voir [les règles du batch et de réparation](docs/batch.md).
 
 ## Utilisation
 
@@ -122,6 +162,9 @@ Un nom seul est recherché d’abord tel quel, puis dans `import/`. Un chemin ex
 
 | Option | Effet |
 |--------|-------|
+| `--batch DOSSIER` | Convertit récursivement les FIT/FIT.gz ; exclusif avec un fichier individuel et `--sync-history` |
+| `--jobs auto\|all\|N` | Processus du batch : défaut `auto` (maximum 4), tous les CPU disponibles ou entier positif |
+| `--sync-history` | Complète ou répare le registre depuis les FIT archivés ; sauvegarde avant réparation |
 | `--output PATH` | Chemin du `.md` de sortie (court-circuite le nommage auto ; `.gpx` et `.fit` sont déposés à côté avec le même basename) |
 | `--stdout` | Affiche le Markdown ; **aucun export, déplacement ni création de dossier** |
 | `--details` | Ajoute les champs complémentaires et les synthèses des mesures enregistrées |

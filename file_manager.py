@@ -15,11 +15,12 @@ import shutil
 import sys
 import tempfile
 import unicodedata
+from contextlib import contextmanager
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-from activity_history import HistoryEntry, parse_history, render_history, upsert_history
+from activity_history import HistoryEntry, parse_history, recover_history, render_history, sort_history
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -167,28 +168,57 @@ def _is_history_destination(target: Path) -> bool:
         return False
 
 
-def update_activity_history(entry: HistoryEntry, md_target: Path) -> None:
-    """Met à jour le registre après export ; aucune modification des activités."""
+def _check_history_file() -> Path:
     history_path = activity_history_path()
     if history_path.is_symlink():
         raise ValueError(f"Historique symbolique refusé : {history_path}")
     if history_path.exists() and not history_path.is_file():
         raise ValueError(f"L’historique n’est pas un fichier : {history_path}")
+    return history_path
+
+
+def read_activity_history() -> list[HistoryEntry]:
+    history_path = _check_history_file()
     try:
         text = history_path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        entries = []
-    else:
-        entries = parse_history(text)
-    directory = history_path.parent.resolve()
-    target = md_target.resolve()
-    relative_link = Path(os.path.relpath(target, directory)).as_posix()
-    entry = replace(entry, link=relative_link)
-    displaced_ids = {
-        old.activity_id for old in entries
-        if old.link is not None and (directory / old.link).resolve() == target
-    }
-    content = render_history(upsert_history(entries, entry, displaced_ids))
+        return []
+    return parse_history(text)
+
+
+def update_activity_history(entry: HistoryEntry, md_target: Path) -> None:
+    """Met à jour le registre après export ; aucune modification des activités."""
+    update_activity_histories([(entry, md_target)])
+
+
+def update_activity_histories(updates: list[tuple[HistoryEntry, Path]]) -> None:
+    """Fusionne un lot publié, avec un seul tri et une seule écriture."""
+    if not updates:
+        return
+    entries = read_activity_history()
+    directory = activity_history_path().parent.resolve()
+    by_id = {entry.activity_id: entry for entry in entries}
+    owners = {}
+    for entry in entries:
+        if entry.link is not None:
+            owners.setdefault((directory / entry.link).resolve(), set()).add(entry.activity_id)
+    for entry, md_target in updates:
+        previous = by_id.get(entry.activity_id)
+        if previous is not None and previous.link is not None:
+            owners[(directory / previous.link).resolve()].discard(entry.activity_id)
+        target = md_target.resolve()
+        for displaced_id in owners.get(target, set()):
+            by_id[displaced_id] = replace(by_id[displaced_id], link=None)
+        owners[target] = {entry.activity_id}
+        link = Path(os.path.relpath(target, directory)).as_posix()
+        by_id[entry.activity_id] = replace(entry, link=link)
+    write_activity_history(list(by_id.values()))
+
+
+def write_activity_history(entries: list[HistoryEntry]) -> None:
+    """Publication atomique ; l'appelant détient le verrou d'écriture."""
+    content = render_history(sort_history(entries))
+    history_path = _check_history_file()
     history_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -205,6 +235,91 @@ def update_activity_history(entry: HistoryEntry, md_target: Path) -> None:
                 temporary.unlink(missing_ok=True)
             except OSError as error:
                 print(f"Attention : nettoyage impossible dans {temporary} : {error}", file=sys.stderr)
+
+
+def load_history_for_sync() -> tuple[list[HistoryEntry], bytes | None, bool, list[str]]:
+    """Garde les octets exacts pour une éventuelle réparation explicite."""
+    path = _check_history_file()
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return [], None, False, []
+    try:
+        text = raw.decode("utf-8")
+        return parse_history(text), raw, False, []
+    except ValueError:
+        text = raw.decode("utf-8", errors="replace")
+        entries, warnings = recover_history(text)
+        return entries, raw, True, warnings
+
+
+def backup_activity_history(raw: bytes) -> Path:
+    """Sauvegarde exclusive, exacte et indépendante du remplacement du registre."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    path = activity_history_path()
+    backup = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", prefix=f"{path.name}.bak-{stamp}-",
+                                         dir=path.parent, delete=False) as handle:
+            backup = Path(handle.name)
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        if backup is not None:
+            try:
+                backup.unlink(missing_ok=True)
+            except OSError:
+                print(f"Attention : sauvegarde incomplète à supprimer : {backup}", file=sys.stderr)
+        raise
+    return backup
+
+
+@contextmanager
+def activity_write_lock():
+    """Verrou commun aux commandes, libéré par le système même après un arrêt."""
+    # Ne jamais supprimer ce fichier : cela créerait deux inodes verrouillables.
+    path = EXPORT_DIR.parent / ".fit-extractor.lock"
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(path, flags, 0o600), "r+b") as handle:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                if os.fstat(handle.fileno()).st_size == 0:
+                    handle.write(b"\0")
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise OSError(f"Écriture indisponible : une autre commande peut être active ({path})") from error
+        yield
+
+
+def find_activity_files(directory: Path, suffixes: tuple[str, ...] = (".fit", ".fit.gz")) -> list[Path]:
+    """Inventaire stable, récursif, sans suivre les liens symboliques."""
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError(f"Dossier d’activités invalide : {directory}")
+    files = []
+    def on_error(error):
+        raise error
+    for root, dirs, names in os.walk(directory, onerror=on_error):
+        dirs[:] = sorted(name for name in dirs if not (Path(root) / name).is_symlink()
+                         and not name.startswith(".fit-export-"))
+        for name in sorted(names):
+            path = Path(root) / name
+            if name.lower().endswith(suffixes) and not path.is_symlink() and path.is_file():
+                files.append(path)
+    return files
+
+
+def archive_markdown_candidate(path: Path) -> tuple[Path, bool]:
+    """Le nom _dupN indique une famille ambiguë, jamais une preuve de lien."""
+    stem = path.name[:-len(_source_fit_extension(path))]
+    base = re.sub(r"_dup[0-9]+$", "", stem)
+    return path.with_name(base + ".md"), base != stem
 
 
 def plan_archive_path(source: Path, md_target: Path) -> Path:
