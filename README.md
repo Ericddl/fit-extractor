@@ -6,8 +6,9 @@
 CLI Python qui convertit un fichier `.fit` (montre Suunto, compteur Garmin) en **Markdown dense**, prêt à coller dans ChatGPT ou Claude pour de l'analyse et du coaching sportif — plus un **fichier GPX 1.1** de la trace complète.
 
 Les séries brutes sont remplacées par des résumés et des tableaux : allures adaptées
-au sport, kilomètres, terrain et qualité de l’enregistrement. La taille du Markdown
-dépend notamment du nombre de tours et de kilomètres, sans dérouler les intervalles RR.
+au sport, kilomètres, montées en trail, terrain et qualité de l’enregistrement.
+La taille du Markdown dépend notamment du nombre de tours et de kilomètres,
+sans dérouler les intervalles RR.
 
 ```
 import/Trail_le_matin.fit
@@ -317,13 +318,15 @@ Les variantes standard/enhanced ne sont pas répétées.
 | Cadence course / foulées | ✓ | — |
 | Profil utilisateur (âge, poids, FC repos/max) | — | ✓ |
 | Zones cibles (FTP, seuil FC) | — | ✓ |
-| VAM | — | ✓ |
+| VAM fournie par l’appareil | — | ✓ |
 
 L'extraction des champs est **générique dans les types de messages traités** :
 `session`, `lap`, `record`, `hrv`, `device_info`, `user_profile`, `zones_target`.
 Le rendu standard sélectionne les métriques affichées ; `--details` complète cette
 restitution sans exporter toutes les données brutes. La compatibilité avec d’autres
 matériels dépend des messages disponibles et du support de `fitparse`.
+La VAM estimée par montée en trail est calculée à partir des records disponibles,
+indépendamment de la marque ; elle est distincte de la VAM fournie par l’appareil.
 
 ## Architecture
 
@@ -332,7 +335,7 @@ Cinq modules, sans framework :
 | Module | Rôle |
 |---|---|
 | [`extractor.py`](extractor.py) | Parsing FIT, calcul HRV, formatage Markdown, CLI |
-| [`activity_analysis.py`](activity_analysis.py) | Calculs purs : unités, allures, kilomètres, terrain et qualité |
+| [`activity_analysis.py`](activity_analysis.py) | Calculs purs : unités, allures, kilomètres, montées, terrain et qualité |
 | [`activity_history.py`](activity_history.py) | Entrées, validation, tri et rendu du registre Markdown, sans accès disque |
 | [`file_manager.py`](file_manager.py) | Chemins, nommage, archivage du `.fit`, publication séparée du registre |
 | [`gpx_exporter.py`](gpx_exporter.py) | Extraction des points GPS, génération du GPX 1.1 (`xml.etree.ElementTree`) |

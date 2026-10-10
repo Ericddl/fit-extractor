@@ -17,7 +17,7 @@ Le traitement est local, sans appel réseau ni API d’IA.
 ## Architecture et dépendances
 
 - `extractor.py` : CLI `argparse`, parsing FIT, calcul HRV et rendu Markdown.
-- `activity_analysis.py` : calculs purs d’allure, kilomètres, terrain et qualité, sans accès disque.
+- `activity_analysis.py` : calculs purs d’allure, kilomètres, montées, terrain et qualité, sans accès disque.
 - `activity_history.py` : entrées, relecture, validation, tri et rendu du registre, sans accès disque.
 - Les séries des graphiques Unicode sont échantillonnées dans `activity_analysis.py` ;
   leur rendu reste dans `extractor.py`.
@@ -40,7 +40,7 @@ Repères dans le code :
   `lap`, `record`, `hrv`, `device_info`, `user_profile` et `zones_target` ; le rendu
   sélectionne ensuite les données utiles. `detect_device()` lit le fabricant ;
   la présence des champs détermine les sections, pas une matrice rigide par appareil.
-- `analyze_records(records, sport)` produit qualité, kilomètres, terrain,
+- `analyze_records(records, sport)` produit qualité, kilomètres, montées, terrain,
   altitudes et séries de graphiques sans modifier les records ni accéder au disque.
 - `activity_history.py` expose `HistoryEntry`, `build_history_entry()`,
   `parse_history()`, `render_history()` et `upsert_history()` ;
@@ -92,12 +92,15 @@ python3 -m venv .venv
   FC utilisent la somme des durées de zones valides, pas la durée totale.
 - Les graphiques Unicode sont inclus par défaut : altitude/distance, cardio/temps,
   vitesse ou allure/temps, sur 60 caractères et avec des échelles indépendantes.
+- En trail (`running` / `trail`), le tableau « Montées » affiche la VAM estimée
+  par pente, par défaut et avec `--details` ; aucune VAM dans le découpage kilométrique.
 
 ## Validation
 
-La suite `unittest` dans `tests/` couvre l’historique et son intégration avec
-l’export, sur données synthétiques et dossiers temporaires. Pas de CI ni de
-configuration de lint ; aucun dossier `examples/` ou jeu de FIT personnel versionné.
+La suite `unittest` dans `tests/` couvre l’historique, son intégration avec
+l’export, le dénivelé et les montées, sur données synthétiques et dossiers temporaires.
+Pas de CI ni de configuration de lint ; aucun dossier `examples/` ou jeu de FIT
+personnel versionné.
 
 - Vérifier l’aide CLI et le rendu `--stdout` sur un FIT approprié si disponible.
 - Pour une évolution fonctionnelle, vérifier si possible Suunto et Garmin,
@@ -109,6 +112,10 @@ configuration de lint ; aucun dossier `examples/` ou jeu de FIT personnel versio
 - Vérifier les kilomètres interpolés, interruptions, régressions, pentes ±3 %,
   FC partielle et données absentes sur des records synthétiques ; compléter sur
   copies de FIT course/trail/vélo/natation sans toucher aux originaux.
+- Montées : vérifier les seuils inclusifs de 100 m de gain net et de 50 m de
+  descente, les petits replats, les portions partielles, les distances répétées,
+  le D+ cumulé et la durée entière dans la VAM. Vérifier les coupures et le rendu
+  réservé au trail, avec/sans `--details` et sans GPS.
 - Indiquer les commandes exécutées et les limites de validation ; ne pas
   présenter l’affichage de l’aide comme un test complet de conversion.
 - Graphiques : contrôler largeur, constantes, trous, axes régressifs, unités,
@@ -131,9 +138,21 @@ configuration de lint ; aucun dossier `examples/` ou jeu de FIT personnel versio
 - Garder les titres et libellés utilisateur en français, les unités explicites
   et les sections facultatives conditionnées par les données disponibles.
 - HRV : rendre RMSSD et SDNN, jamais les intervalles RR bruts.
-- Les kilomètres et le terrain utilisent la distance FIT, pas une distance GPS
-  reconstruite. Ne pas interpoler les interruptions ; signaler les analyses incomplètes.
-  Supprimer les analyses kilométriques si les horodatages ou la distance reculent.
+- Les kilomètres, les montées et le terrain utilisent la distance FIT, pas une
+  distance GPS reconstruite. Ne pas interpoler les interruptions ; signaler les
+  analyses incomplètes. Supprimer les analyses kilométriques et les montées si
+  les horodatages ou la distance reculent.
+- Dénivelé : conserver les variations d’altitude filtrées lorsque la distance FIT
+  se répète ; cela ne prouve pas un arrêt réel. Les affecter au même segment que
+  la durée correspondante, sans franchir une coupure ni reconstruire la distance.
+- Montées : médiane de cinq points par portion continue ; gain net minimal de
+  100 m, fin confirmée après une descente de 50 m depuis le sommet. Conserver les
+  petits replats et descentes intermédiaires. Départ au dernier minimum, fin au
+  premier maximum ; ne pas fusionner des portions séparées par une donnée manquante.
+  Marquer « Partielle » si le départ est le premier point de la portion ou si la
+  fin n’est pas confirmée. Calculer la VAM sur la portion observée : D+ cumulé ×
+  3 600 / durée enregistrée en secondes, arrêts compris, avant arrondi en m/h.
+  Exclure les montées sans étendue de distance ou sans durée positive.
 - Terrain : médiane de cinq points par portion continue, tronçons de 50 m, seuils
   ±3 %, dénivelé estimé. Les FC de ces analyses sont pondérées par les durées valides,
   contrairement aux synthèses d’échantillons de `--details`.

@@ -62,7 +62,7 @@ fit-extractor/
 │   └── .gitkeep
 ├── AGENTS.md             # Instructions Codex
 ├── CONTRIBUTING.md       # Contribution et validation
-├── tests/                # Tests unittest de l’historique et de son intégration
+├── tests/                # Tests unittest : historique, export, dénivelé et montées
 └── export/               # .md/.gpx générés + .fit archivés
     └── .gitkeep
 ```
@@ -83,7 +83,7 @@ import/fichier.fit (.gz)
   → détection du profil matériel (Suunto vs Garmin vs autre)
   → planification du basename normalisé
       YYYY-MM-DD_<activité>_<indice>
-  → analyse des records (kilomètres, terrain, qualité) selon le sport
+  → analyse des records (kilomètres, montées, terrain, qualité) selon le sport
   → formatage Markdown sportif par défaut, compléments techniques avec --details
   → extraction GPS et construction du GPX éventuel en mémoire
   → préparation des fichiers temporaires et copie exacte de la source
@@ -115,8 +115,9 @@ import/fichier.fit (.gz)
 - **Interfaces** : `numeric_field(fields, key, unit=None)`,
   `preferred_number(fields, key, unit)`, `activity_speed(fields)`,
   `analyze_records(records, sport)`.
-- **Sortie d’analyse** : qualité de l’enregistrement, kilomètres, motif éventuel
-  d’indisponibilité, agrégats terrain et distance analysée, altitudes valides.
+- **Sortie d’analyse** : qualité de l’enregistrement, kilomètres, montées avec VAM
+  et état complet/partiel, motifs éventuels d’indisponibilité, agrégats terrain et
+  distance analysée, altitudes valides et séries des graphiques.
 - **Dépendances** : `math`, `dataclasses`, `datetime`, `statistics` (stdlib).
 - `extractor.py` reste responsable du rendu français et du suivi des champs déjà affichés.
 
@@ -375,7 +376,7 @@ Une montée encore ouverte à la fin d’une portion s’arrête au maximum obse
 Marquer « Partielle » si le départ est le premier point de la portion ou si la
 fin n’est pas confirmée par la descente de 50 m, sinon « Complète ».
 Ne pas fusionner des portions séparées par une donnée manquante ou une interruption.
-Exclure les montées sans étendue de distance ni durée positive. Un recul de temps
+Exclure les montées sans étendue de distance ou sans durée positive. Un recul de temps
 ou de distance rend ce tableau indisponible ; expliquer aussi l’absence de montée
 qualifiante dans la qualité. Calculer le D+ cumulé filtré et la durée sur la portion
 observée, puis VAM = D+ × 3 600 / secondes, avant tout arrondi, arrêts compris.
@@ -679,7 +680,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | Module `gpx_exporter.py` dédié | Sépare la génération XML du parsing FIT | Tout garder dans `extractor.py` |
 | Préparation puis restauration sur erreur gérée | Évite les exports partiels, archivage compris | Écrire le Markdown avant de construire le GPX |
 | Mode `--details` optionnel | Complète les métriques sans allonger le résumé par défaut | Dérouler toutes les séries brutes |
-| Analyses sportives par défaut dans un module pur | Kilomètres, terrain et qualité utilisables sans option technique | Coupler les calculs aux écritures ou les masquer dans `--details` |
+| Analyses sportives par défaut dans un module pur | Kilomètres, montées de trail, terrain et qualité utilisables sans option technique | Coupler les calculs aux écritures ou les masquer dans `--details` |
 | Estimations avec couverture explicite | Éviter les allures et dénivelés trompeurs sur données interrompues | Interpoler tous les trous ou confondre temps chronométré et mouvement |
 | Synthèses sans dépendance supplémentaire | Comptages et statistiques simples avec la stdlib | Ajouter une bibliothèque de données |
 | Registre Markdown v1 à colonnes fixes et commentaires techniques | Vue pour le coaching, relisible sans fichier de données supplémentaire | Base de données ou JSON |
@@ -751,12 +752,14 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - [ ] `feeling` (ressenti Suunto 1-5) : mapping valeur numérique → libellé non documenté
 - [ ] Multi-session FIT (triathlon) : non géré — hypothèse 1 session par fichier
 - [ ] Batch processing non prévu
-- [ ] Couverture automatisée centrée sur l’historique et l’intégration d’export ; analyses sportives et compatibilité matérielle à compléter selon `CONTRIBUTING.md`
+- [ ] Couverture automatisée : historique, intégration d’export, dénivelé et montées ; autres analyses sportives et compatibilité matérielle à compléter selon `CONTRIBUTING.md`
 - [ ] Pas de reprise après arrêt brutal ni coordination d’exports concurrents
 - [ ] Historique potentiellement incomplet après erreur ou arrêt ; aucun mécanisme de réparation ou de reprise de l’existant
 
 Suite actuelle : `.venv/bin/python -B -m unittest discover -s tests -v`.
 Tests synthétiques avec `unittest.mock` et `tempfile`, sans FIT personnel versionné.
+Les montées sont testées sur profils synthétiques : seuils, replats, portions
+partielles, coupures, régressions, distances répétées et rendu réservé au trail.
 
 ---
 
@@ -764,6 +767,7 @@ Tests synthétiques avec `unittest.mock` et `tempfile`, sans FIT personnel versi
 
 | Date | Changement |
 |------|------------|
+| 2026-10-10 | Tableau « Montées » en trail : gain net minimal de 100 m, séparation après 50 m de descente, VAM par pente et portions partielles ; correction du dénivelé avec distances répétées et tests synthétiques |
 | 2026-10-03 | Historique Markdown global : déduplication SHA-256 du FIT décompressé, tri UTC, publication atomique après export et avertissements non bloquants ; tests unittest synthétiques |
 | 2026-09-17 | Graphiques Unicode par défaut : altitude/distance, cardio et vitesse/allure selon le temps ; 60 positions, trous préservés, seuil d’interruption partagé |
 | 2026-09-13 | Markdown adapté au sport : natation, allures par tour, zones en %, temps hors chronomètre, TE anaérobie, VAM et altitudes ; analyses kilométriques, terrain et qualité par défaut via `activity_analysis.py` |
@@ -805,7 +809,7 @@ Ce projet a été développé et testé sur deux matériels réels :
 - Toute nouvelle section du Markdown individuel doit être conditionnelle ; le registre conserve ses dix colonnes fixes
 - Toute logique de chemin / nommage / déplacement appartient à `file_manager.py`, pas à `extractor.py`
 - Toute logique d'extraction GPS / génération XML GPX appartient à `gpx_exporter.py`, pas à `extractor.py`
-- Les calculs kilométriques, terrain et qualité appartiennent à `activity_analysis.py`, sans accès disque ; leur rendu reste dans `extractor.py`
+- Les calculs kilométriques, montées, terrain et qualité appartiennent à `activity_analysis.py`, sans accès disque ; leur rendu reste dans `extractor.py`
 - Les transformations du registre appartiennent à `activity_history.py`, sans accès disque ; les chemins et sa publication restent dans `file_manager.py`
 - Respecter le workflow `import/` → `export/` : ne pas réintroduire d'écriture par défaut à côté du `.fit` source
 - Le GPX doit rester en stdlib (`xml.etree.ElementTree`) — pas d'ajout de dépendance `gpxpy` ou autre

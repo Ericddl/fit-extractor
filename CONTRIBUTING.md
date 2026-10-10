@@ -18,7 +18,7 @@ Ouvrez une [issue](https://github.com/Ericddl/fit-extractor/issues) en précisan
 2. Testez votre modification sur un vrai `.fit` — idéalement une activité outdoor **et** une activité indoor (sans GPS).
 3. Ouvrez une pull request en décrivant le comportement avant / après.
 
-La suite de tests de l’historique utilise `unittest`, sans dépendance supplémentaire :
+La suite de tests utilise `unittest`, sans dépendance supplémentaire :
 
 ```bash
 .venv/bin/python -B -m unittest discover -s tests -v
@@ -26,6 +26,8 @@ La suite de tests de l’historique utilise `unittest`, sans dépendance supplé
 
 Elle vérifie le format, les métriques, le tri, la déduplication, les chemins,
 les avertissements et les erreurs d’écriture/archivage sur données synthétiques.
+Elle couvre aussi le dénivelé avec distances répétées et la détection des montées
+de trail, ainsi que leur VAM et leur rendu Markdown.
 Elle ne remplace pas les contrôles matériels et sportifs. Vérification manuelle minimale :
 
 ```bash
@@ -64,6 +66,14 @@ et régressions. Vérifier les pentes ±3 %, les fenêtres de 50 m, le filtrage 
 d’altitude, l’absence de GPS et les unités course/natation/vélo. Compléter sur des
 copies de FIT des quatre sports disponibles. `activity_analysis.py` n’effectue
 aucune écriture et ne doit pas modifier les données reçues.
+
+Pour les montées de trail, vérifier les seuils inclusifs de 100 m de gain net et
+de 50 m de descente, les petits replats et les portions partielles. Conserver les
+variations d’altitude filtrées malgré les distances FIT répétées ; ne pas fusionner
+les portions séparées par une donnée manquante ou une interruption. La VAM utilise
+le D+ cumulé et la durée enregistrée entière, arrêts compris, avant arrondi.
+Vérifier le tableau séparé « Montées », uniquement en trail, avec/sans `--details`
+et sans GPS ; aucune VAM ne doit apparaître dans le découpage kilométrique.
 
 Pour les graphiques Unicode, vérifier les 60 caractères et leurs espaces conservés
 dans les blocs Markdown : séries constantes/croissantes/décroissantes, deux points,
