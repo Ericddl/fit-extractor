@@ -194,9 +194,11 @@ def _accumulate(row: dict, first: Sample, second: Sample, lower: float, upper: f
         row["hr_seconds"] += duration
     if first.smoothed_altitude is not None and second.smoothed_altitude is not None:
         elevation = (second.smoothed_altitude - first.smoothed_altitude) * (upper - lower)
+        # Une distance FIT répétée peut simplement refléter une mise à jour moins
+        # fréquente que celle de l'altitude ; elle ne prouve pas un arrêt réel.
+        row["ascent"] += max(0, elevation)
+        row["descent"] += max(0, -elevation)
         if distance > 0:
-            row["ascent"] += max(0, elevation)
-            row["descent"] += max(0, -elevation)
             row["altitude_covered"] += distance
 
 
@@ -235,6 +237,49 @@ def _distance_bins(samples: list[Sample], gap_limit: float, width: float, origin
     return rows
 
 
+def _analyze_climbs(runs: list[list[Sample]]) -> list[dict]:
+    """Repère des montées de 100 m nets, séparées par une baisse de 50 m."""
+    climbs = []
+    for run in runs:
+        low = high = 0
+        climbing = False
+
+        def append_climb(confirmed_end: bool) -> None:
+            first, last = run[low], run[high]
+            if last.distance <= first.distance:
+                return
+            row = _empty_bin(first.distance, last.distance)
+            for before, after in zip(run[low:high], run[low + 1:high + 1]):
+                _accumulate(row, before, after, 0, 1)
+            if row["seconds"] <= 0:
+                return
+            row.update(
+                complete=low > 0 and confirmed_end,
+                start_altitude=first.smoothed_altitude,
+                end_altitude=last.smoothed_altitude,
+                vam=row["ascent"] * 3600 / row["seconds"],
+            )
+            climbs.append(row)
+
+        for index, sample in enumerate(run):
+            altitude = sample.smoothed_altitude
+            if not climbing:
+                if altitude <= run[low].smoothed_altitude:
+                    low = index
+                elif altitude - run[low].smoothed_altitude >= 100 - 1e-9:
+                    high = index
+                    climbing = True
+            elif altitude > run[high].smoothed_altitude:
+                high = index
+            elif run[high].smoothed_altitude - altitude >= 50 - 1e-9:
+                append_climb(confirmed_end=True)
+                low = index
+                climbing = False
+        if climbing:
+            append_climb(confirmed_end=False)
+    return climbs
+
+
 def analyze_records(records: list[dict], sport: str) -> dict:
     """Analyse la couverture et les portions continues, sans interpoler les interruptions."""
     samples = [_sample(record) for record in records]
@@ -255,11 +300,13 @@ def analyze_records(records: list[dict], sport: str) -> dict:
     runs = _altitude_runs(samples, gap_limit)
     result = {"quality": quality, "graphs": _activity_graphs(records, samples, gap_limit),
               "kilometers": [], "kilometer_reason": None,
+              "climbs": [], "climb_reason": None,
               "terrain": {}, "terrain_distance": 0.0,
               "altitudes": [sample.altitude for sample in samples if sample.altitude is not None]}
     if sport == "running":
         if backwards or regressions:
             result["kilometer_reason"] = "chronologie ou distance cumulée non monotone"
+            result["climb_reason"] = result["kilometer_reason"]
         elif len(distances) < 2 or distances[-1] <= distances[0]:
             result["kilometer_reason"] = "distance cumulée insuffisante"
         elif len(times) < 2:
@@ -270,6 +317,10 @@ def analyze_records(records: list[dict], sport: str) -> dict:
                 result["kilometer_reason"] = "distance cumulée excessive (plus de 10 000 kilomètres)"
             else:
                 result["kilometers"] = _distance_bins(samples, gap_limit, 1000, origin, distances[-1])
+        if not backwards and not regressions:
+            result["climbs"] = _analyze_climbs(runs)
+            if not result["climbs"]:
+                result["climb_reason"] = "aucune montée continue avec un gain net d’altitude d’au moins 100 m"
     if sport in {"running", "cycling"}:
         terrain = {name: _empty_bin(0, 0) for name in ("Montée", "Plat", "Descente")}
         for run in runs:

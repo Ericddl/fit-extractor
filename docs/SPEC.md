@@ -362,11 +362,35 @@ La durée est celle des horodatages (« durée enregistrée »), qui peut inclur
 arrêts. Les intervalles stationnaires sont affectés au kilomètre de leur position,
 au suivant sur une limite exacte, ou au dernier à la fin du parcours.
 
+**Montées (trail uniquement)** : pour `sport=running`, `sub_sport=trail`, tableau
+séparé « Montées », par défaut et avec `--details`, après le découpage kilométrique.
+Colonnes : montée, début et fin en km FIT, distance, état, D+ estimé, durée
+enregistrée et VAM estimée. Ne pas afficher de VAM par kilomètre.
+Sur chaque portion continue avec temps, distance et altitude valides, repérer un
+gain net d’altitude filtrée d’au moins 100 m ; une baisse d’au moins 50 m depuis
+le sommet confirme la fin et autorise une nouvelle montée. Conserver les petits
+replats et descentes intermédiaires. Le départ est le dernier minimum avant le
+gain de 100 m ; la fin est le premier maximum atteint avant la descente de 50 m.
+Une montée encore ouverte à la fin d’une portion s’arrête au maximum observé.
+Marquer « Partielle » si le départ est le premier point de la portion ou si la
+fin n’est pas confirmée par la descente de 50 m, sinon « Complète ».
+Ne pas fusionner des portions séparées par une donnée manquante ou une interruption.
+Exclure les montées sans étendue de distance ni durée positive. Un recul de temps
+ou de distance rend ce tableau indisponible ; expliquer aussi l’absence de montée
+qualifiante dans la qualité. Calculer le D+ cumulé filtré et la durée sur la portion
+observée, puis VAM = D+ × 3 600 / secondes, avant tout arrondi, arrêts compris.
+Afficher des m/h arrondis à l’entier. La note précise les seuils, les portions
+partielles et le dénominateur. Cette estimation est indépendante de la VAM globale
+éventuellement fournie par l’appareil dans le résumé général.
+
 **Altitude et terrain (course/trail/vélo)** : médiane glissante centrée de cinq
 points sur chaque portion continue avec temps, distance et altitude valides ;
 aux extrémités, utiliser seulement les points disponibles. Dénivelé kilométrique
-estimé par cumul des variations filtrées pendant les déplacements, sans franchir
-de trou d’altitude. Terrain : tronçons de 50 m à partir du début de chaque portion,
+estimé par cumul des variations filtrées sur les intervalles continus, y compris
+lorsque deux distances FIT successives sont identiques : une distance répétée
+ne prouve pas un arrêt réel. Affecter ces variations au même segment que la durée
+stationnaire, sans franchir de trou d’altitude ni reconstruire la distance.
+Terrain : tronçons de 50 m à partir du début de chaque portion,
 pente nette > +3 % en montée, < −3 % en descente, bornes incluses dans le plat.
 Les reliquats de moins de 50 m sont exclus ; afficher la distance analysée.
 Ignorer les portions dépassant 10 000 km, hors domaine d’usage de cette analyse.

@@ -334,7 +334,16 @@ def _append_analysis_table(lines: list, title: str, headers: list, rows: list, n
     lines.extend(["", "---", ""])
 
 
-def _append_activity_analysis(lines: list, analysis: dict, sport: str, elapsed, timer) -> None:
+def _append_activity_analysis(lines: list, analysis: dict, sport: str, elapsed, timer,
+                              *, sub_sport: str = "") -> None:
+    show_climbs = sport == "running" and sub_sport.lower() == "trail"
+    headers = ["Km", "Distance", "État", "Durée enregistrée", "Allure", "FC moy.", "D+ estimé", "D− estimé"]
+    note = (
+        "Limites interpolées sur la distance cumulée FIT. La durée enregistrée peut inclure des arrêts. "
+        "Aucune interpolation à travers une interruption ; dénivelé estimé après médiane glissante de cinq points. "
+        "Les variations d’altitude sont conservées même lorsque la distance FIT se répète. "
+        "FC pondérée par les durées des intervalles avec deux mesures FC valides."
+    )
     rows = []
     for row in analysis["kilometers"]:
         complete = row["complete"] and row["seconds"] > 0
@@ -350,11 +359,25 @@ def _append_activity_analysis(lines: list, analysis: dict, sport: str, elapsed, 
             f"{row['descent']:.0f} m" if complete and row["altitude_complete"] else "-",
         ])
     _append_analysis_table(
-        lines, "Découpage kilométrique", ["Km", "Distance", "État", "Durée enregistrée", "Allure", "FC moy.", "D+ estimé", "D− estimé"], rows,
-        "Limites interpolées sur la distance cumulée FIT. La durée enregistrée peut inclure des arrêts. "
-        "Aucune interpolation à travers une interruption ; dénivelé estimé après médiane glissante de cinq points. "
-        "FC pondérée par les durées des intervalles avec deux mesures FC valides.",
+        lines, "Découpage kilométrique", headers, rows, note,
     )
+    if show_climbs:
+        climb_rows = [
+            [index, f"{row['start'] / 1000:.3f} km", f"{row['end'] / 1000:.3f} km",
+             f"{row['distance'] / 1000:.3f} km", "Complète" if row["complete"] else "Partielle",
+             f"{row['ascent']:.0f} m", _fmt_duration(row["seconds"]), f"{row['vam']:.0f} m/h"]
+            for index, row in enumerate(analysis["climbs"], 1)
+        ]
+        _append_analysis_table(
+            lines, "Montées", ["Montée", "Début", "Fin", "Distance", "État", "D+ estimé", "Durée enregistrée", "VAM estimée"],
+            climb_rows,
+            "Montées d’au moins 100 m de gain net d’altitude, séparées par une descente d’au moins 50 m. "
+            "Altitude filtrée par médiane glissante de cinq points ; petits replats et descentes intermédiaires conservés. "
+            "Aucune interpolation à travers une interruption ou une donnée manquante. "
+            "Partielle : début ou fin non confirmé dans la portion continue observée. "
+            "VAM estimée : D+ cumulé divisé par la durée enregistrée entière de la montée, arrêts compris, en m/h. "
+            "Pour une montée partielle, les métriques concernent uniquement la portion observée.",
+        )
     terrain_rows = []
     for name, row in analysis["terrain"].items():
         speed = row["distance"] / row["seconds"] * 3.6
@@ -387,6 +410,8 @@ def _append_activity_analysis(lines: list, analysis: dict, sport: str, elapsed, 
         quality_rows.append(["Plus grande interruption", f"{quality['largest_gap']:.1f} s"])
     if analysis["kilometer_reason"]:
         quality_rows.append(["Découpage kilométrique indisponible", analysis["kilometer_reason"]])
+    if show_climbs and analysis["climb_reason"]:
+        quality_rows.append(["Montées indisponibles", analysis["climb_reason"]])
     if sport in {"running", "cycling"} and not analysis["terrain"]:
         quality_rows.append(["Terrain indisponible", "aucun tronçon continu de 50 m avec distance, temps et altitude exploitables"])
     if _finite_number(elapsed) and _finite_number(timer) and (timer < 0 or elapsed < timer):
@@ -810,7 +835,7 @@ def format_markdown(
             lines.append("---")
             lines.append("")
 
-    _append_activity_analysis(lines, analysis, sport_kind, elapsed, timer)
+    _append_activity_analysis(lines, analysis, sport_kind, elapsed, timer, sub_sport=sub_sport)
 
     if details:
         _append_detail_table(lines, "Champs complémentaires de séance", [

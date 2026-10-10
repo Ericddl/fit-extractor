@@ -208,6 +208,7 @@ Les sections n'apparaissent que si les données correspondantes existent dans le
 - **Zones cibles** (Garmin) : FTP, seuil FC
 - **Tours / Laps** : tableau par lap
 - **Découpage kilométrique** : course et trail, avec allure, FC et dénivelé estimé
+- **Montées** : grandes pentes de trail, avec bornes, D+ estimé, durée et VAM estimée
 - **Répartition du terrain** : montée/plat/descente en course, trail et vélo
 - **Qualité de l’enregistrement** : couverture FC/GPS/altitude, interruptions et données manquantes
 - **Points GPS** (Markdown échantillonné) : uniquement avec `--gps`
@@ -241,6 +242,20 @@ Ces analyses sont incluses sans `--details` lorsqu’elles sont calculables :
   inclure des arrêts. Les kilomètres traversant une interruption restent marqués
   incomplets, sans allure calculée ; une régression de temps ou de distance rend
   le tableau indisponible. Aucun recalcul de distance depuis le GPS.
+  Les variations d’altitude filtrées sont conservées même si la distance FIT
+  se répète entre deux records : sa mise à jour peut être moins fréquente et
+  cela ne démontre pas un arrêt réel.
+- **Montées** : tableau séparé uniquement en trail (`running` / `trail`), avec un
+  gain net d’altitude d’au moins **100 m** ; une descente d’au moins **50 m** sépare
+  deux montées. Les petits replats et descentes intermédiaires restent inclus.
+  Les bornes sont le dernier minimum avant l’ascension et le premier maximum
+  atteint, sur l’altitude filtrée par médiane glissante de cinq points.
+  La **VAM estimée** utilise le D+ cumulé sur la pente, multiplié par 3 600 et divisé
+  par sa durée enregistrée en secondes, arrêts compris, en m/h arrondis à l’entier.
+  Une coupure de temps, de distance ou d’altitude sépare les portions analysées ;
+  les montées dont le début ou la fin n’est pas confirmé sont marquées **Partielle**.
+  Leurs métriques concernent la portion observée. La VAM n’est pas affichée par
+  kilomètre et reste distincte de la VAM globale fournie par l’appareil.
 - **Terrain** : altitude filtrée par médiane glissante de cinq points, puis pente
   estimée sur des tronçons de 50 m. Montée au-dessus de +3 %, descente sous −3 %,
   plat entre ces seuils. Les portions interrompues, trop courtes ou sans altitude
