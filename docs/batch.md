@@ -2,11 +2,15 @@
 
 ## Commandes
 
+Depuis la racine du dépôt, après l’installation du venv externe décrite dans le
+[README](../README.md#installation). Ces commandes d’écriture déplacent les sources
+ou modifient le registre ; utiliser des copies pour les essais.
+
 ```bash
-.venv/bin/python -B extractor.py --batch chemin/copie-activites/
-.venv/bin/python -B extractor.py --batch chemin/copie-activites/ --jobs 8
-.venv/bin/python -B extractor.py --batch chemin/copie-activites/ --jobs all
-.venv/bin/python -B extractor.py --sync-history
+~/.venvs/fit-export-md/bin/python -B extractor.py --batch chemin/copie-activites/
+~/.venvs/fit-export-md/bin/python -B extractor.py --batch chemin/copie-activites/ --jobs 8
+~/.venvs/fit-export-md/bin/python -B extractor.py --batch chemin/copie-activites/ --jobs all
+~/.venvs/fit-export-md/bin/python -B extractor.py --sync-history
 ```
 
 La synchronisation est une commande indépendante : la lancer avant le premier
@@ -118,8 +122,8 @@ signalés sans tenter d’en déduire l’identité ou les métriques. Les archi
 Commandes de validation :
 
 ```bash
-.venv/bin/python -B -m unittest discover -s tests -v
-.venv/bin/python -B extractor.py --help
+~/.venvs/fit-export-md/bin/python -B -m unittest discover -s tests -v
+~/.venvs/fit-export-md/bin/python -B extractor.py --help
 git diff --check
 ```
 

@@ -53,17 +53,18 @@ Repères dans le code :
 
 ## Commandes
 
-Depuis la racine, utiliser le venv existant ou l’installer si nécessaire :
+Depuis la racine, utiliser un environnement virtuel dédié, par exemple
+`~/.venvs/fit-export-md`, hors du dépôt. Pour une première installation :
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -B extractor.py --help
-.venv/bin/python -B -m unittest discover -s tests -v
-.venv/bin/python -B extractor.py mon_activite.fit --stdout
-.venv/bin/python -B extractor.py mon_activite.fit --stdout --details
-.venv/bin/python -B extractor.py mon_activite.fit --stdout --gps --gps-limit 30
-.venv/bin/python extractor.py mon_activite.fit
+python3 -m venv "$HOME/.venvs/fit-export-md"
+~/.venvs/fit-export-md/bin/python -m pip install -r requirements.txt
+~/.venvs/fit-export-md/bin/python -B extractor.py --help
+~/.venvs/fit-export-md/bin/python -B -m unittest discover -s tests -v
+~/.venvs/fit-export-md/bin/python -B extractor.py mon_activite.fit --stdout
+~/.venvs/fit-export-md/bin/python -B extractor.py mon_activite.fit --stdout --details
+~/.venvs/fit-export-md/bin/python -B extractor.py mon_activite.fit --stdout --gps --gps-limit 30
+~/.venvs/fit-export-md/bin/python extractor.py mon_activite.fit
 ```
 
 - Un nom seul est recherché d’abord tel quel, puis dans `import/`.

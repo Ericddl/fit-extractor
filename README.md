@@ -29,10 +29,27 @@ Les fichiers `.fit` sont binaires et illisibles. Les exports CSV classiques crac
 ```bash
 git clone https://github.com/Ericddl/fit-extractor.git
 cd fit-extractor
-pip install -r requirements.txt
+python3 -m venv "$HOME/.venvs/fit-export-md"
+source "$HOME/.venvs/fit-export-md/bin/activate"
+python -m pip install -r requirements.txt
 ```
 
 Python 3.10+ requis. Dépendance unique : [`fitparse`](https://github.com/dtcooper/python-fitparse). Le GPX est généré avec la bibliothèque standard, sans dépendance supplémentaire.
+
+Le venv est placé hors du dépôt. Dans chaque
+nouveau terminal, activer cet environnement avant les commandes ci-dessous :
+
+```bash
+source "$HOME/.venvs/fit-export-md/bin/activate"
+python -B extractor.py --help
+```
+
+Depuis la racine du dépôt, on peut aussi appeler directement
+`~/.venvs/fit-export-md/bin/python -B extractor.py --help`, sans activation.
+Après un déplacement du dépôt, conserver ce venv externe ; après un changement
+incompatible de Python, créer un nouvel environnement en préservant l’ancien.
+L’installation peut télécharger des paquets ; les conversions et la suite de tests
+fonctionnent hors ligne.
 
 ## Démarrage rapide
 

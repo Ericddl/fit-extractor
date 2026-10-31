@@ -760,7 +760,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - [ ] Pas de transaction durable après arrêt brutal ; reprise du registre avec `--sync-history`. Verrou commun aux commandes d’écriture de cette version
 - [ ] Historique potentiellement incomplet après erreur ou arrêt ; reprise explicite depuis les archives avec `--sync-history`
 
-Suite actuelle : `.venv/bin/python -B -m unittest discover -s tests -v`.
+Suite actuelle : `~/.venvs/fit-export-md/bin/python -B -m unittest discover -s tests -v`.
 Tests synthétiques avec `unittest.mock` et `tempfile`, sans FIT personnel versionné.
 Les montées sont testées sur profils synthétiques : seuils, replats, portions
 partielles, coupures, régressions, distances répétées et rendu réservé au trail.

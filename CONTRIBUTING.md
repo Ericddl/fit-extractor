@@ -19,10 +19,12 @@ Ouvrez une [issue](https://github.com/Ericddl/fit-extractor/issues) en précisan
 3. Ouvrez une pull request en décrivant le comportement avant / après.
 
 Les règles de batch et de réparation explicite sont dans [docs/batch.md](docs/batch.md).
-La suite de tests utilise `unittest`, sans dépendance supplémentaire :
+Installer les dépendances et activer le venv externe comme indiqué dans le
+[README](README.md#installation). La suite de tests s’exécute hors ligne et
+utilise `unittest`, sans dépendance supplémentaire :
 
 ```bash
-.venv/bin/python -B -m unittest discover -s tests -v
+~/.venvs/fit-export-md/bin/python -B -m unittest discover -s tests -v
 ```
 
 Elle vérifie le format, les métriques, le tri, la déduplication, les chemins,

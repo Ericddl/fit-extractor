@@ -21,6 +21,7 @@ venv/
 *.tcx
 
 # Outils IA (config locale, non partagée)
+/.codex-tasks/
 .claude/settings.local.json
 
 # Éditeur / OS
@@ -28,3 +29,14 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# Artefacts locaux de synchronisation Nextcloud / ownCloud
+# Journaux SQLite (y compris WAL/SHM), logs et transferts incomplets.
+.sync_*.db*
+._sync_*.db*
+.csync_journal.db*
+.owncloudsync.log*
+.nextcloudsync.log*
+.nextcloudpermissions.log*
+*.part
+*.filepart
