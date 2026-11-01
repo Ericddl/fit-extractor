@@ -19,12 +19,12 @@ Ouvrez une [issue](https://github.com/Ericddl/fit-extractor/issues) en précisan
 3. Ouvrez une pull request en décrivant le comportement avant / après.
 
 Les règles de batch et de réparation explicite sont dans [docs/batch.md](docs/batch.md).
-Installer les dépendances et activer le venv externe comme indiqué dans le
+Installer les dépendances et activer le venv local comme indiqué dans le
 [README](README.md#installation). La suite de tests s’exécute hors ligne et
 utilise `unittest`, sans dépendance supplémentaire :
 
 ```bash
-~/.venvs/fit-export-md/bin/python -B -m unittest discover -s tests -v
+.venv/bin/python -B -m unittest discover -s tests -v
 ```
 
 Elle vérifie le format, les métriques, le tri, la déduplication, les chemins,
@@ -34,9 +34,9 @@ de trail, ainsi que leur VAM et leur rendu Markdown.
 Elle ne remplace pas les contrôles matériels et sportifs. Vérification manuelle minimale :
 
 ```bash
-python3 -B extractor.py --help
-python3 -B extractor.py mon_activite.fit --stdout
-python3 -B extractor.py mon_activite.fit --stdout --details --gps --gps-limit 30
+.venv/bin/python -B extractor.py --help
+.venv/bin/python -B extractor.py mon_activite.fit --stdout
+.venv/bin/python -B extractor.py mon_activite.fit --stdout --details --gps --gps-limit 30
 ```
 
 `--stdout` ne crée ni export ni dossier et ne déplace pas la source ; `-B` évite

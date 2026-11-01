@@ -29,25 +29,25 @@ Les fichiers `.fit` sont binaires et illisibles. Les exports CSV classiques crac
 ```bash
 git clone https://github.com/Ericddl/fit-extractor.git
 cd fit-extractor
-python3 -m venv "$HOME/.venvs/fit-export-md"
-source "$HOME/.venvs/fit-export-md/bin/activate"
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
 Python 3.10+ requis. Dépendance unique : [`fitparse`](https://github.com/dtcooper/python-fitparse). Le GPX est généré avec la bibliothèque standard, sans dépendance supplémentaire.
 
-Le venv est placé hors du dépôt. Dans chaque
-nouveau terminal, activer cet environnement avant les commandes ci-dessous :
+Le venv `.venv/` est créé à la racine du projet et ignoré par Git. Depuis cette
+racine, dans chaque nouveau terminal, l’activer avant les commandes ci-dessous :
 
 ```bash
-source "$HOME/.venvs/fit-export-md/bin/activate"
+source .venv/bin/activate
 python -B extractor.py --help
 ```
 
 Depuis la racine du dépôt, on peut aussi appeler directement
-`~/.venvs/fit-export-md/bin/python -B extractor.py --help`, sans activation.
-Après un déplacement du dépôt, conserver ce venv externe ; après un changement
-incompatible de Python, créer un nouvel environnement en préservant l’ancien.
+`.venv/bin/python -B extractor.py --help`, sans activation.
+Après un déplacement du dépôt ou un changement incompatible de Python, recréer
+l’environnement au chemin cible, en préservant l’ancien si nécessaire.
 L’installation peut télécharger des paquets ; les conversions et la suite de tests
 fonctionnent hors ligne.
 
@@ -58,7 +58,7 @@ fonctionnent hors ligne.
 cp ~/Downloads/Trail_le_matin.fit import/
 
 # 2. Convertir
-python3 extractor.py Trail_le_matin.fit
+python extractor.py Trail_le_matin.fit
 ```
 
 ```
@@ -136,14 +136,14 @@ dossier source. Les doublons ignorés restent à leur emplacement.
 
 ```bash
 # Une première fois : inscrire les anciens exports, ou réparer le registre
-python3 extractor.py --sync-history
+python extractor.py --sync-history
 
 # Import récursif ; les FIT déjà inscrits avec un Markdown présent sont ignorés
-python3 extractor.py --batch chemin/copie-activites/
+python extractor.py --batch chemin/copie-activites/
 
 # Régler le nombre de processus
-python3 extractor.py --batch chemin/copie-activites/ --jobs 8
-python3 extractor.py --batch chemin/copie-activites/ --jobs all
+python extractor.py --batch chemin/copie-activites/ --jobs 8
+python extractor.py --batch chemin/copie-activites/ --jobs all
 ```
 
 Le mode `auto` par défaut utilise au maximum quatre processus, limités aux CPU
@@ -170,7 +170,7 @@ symboliques restent refusés. Voir [les règles du batch et de réparation](docs
 ## Utilisation
 
 ```bash
-python3 extractor.py <fichier.fit> [options]
+python extractor.py <fichier.fit> [options]
 ```
 
 Un nom seul est recherché d’abord tel quel, puis dans `import/`. Un chemin explicite (`./ailleurs/course.fit`) est utilisé tel quel.
@@ -204,21 +204,21 @@ Un échec limité à l’historique produit un avertissement et conserve le code
 
 ```bash
 # Conversion simple (lit import/Trail_le_matin.fit, écrit .md + .gpx dans export/)
-python3 extractor.py Trail_le_matin.fit
+python extractor.py Trail_le_matin.fit
 
 # Copier-coller direct dans ChatGPT (rien n'est écrit, le .fit reste dans import/)
-python3 extractor.py Trail_le_matin.fit --stdout | xclip -selection clipboard   # Linux
-python3 extractor.py Trail_le_matin.fit --stdout | pbcopy                       # macOS
+python extractor.py Trail_le_matin.fit --stdout | xclip -selection clipboard   # Linux
+python extractor.py Trail_le_matin.fit --stdout | pbcopy                       # macOS
 
 # Avec points GPS dans le Markdown (jusqu'à 50)
-python3 extractor.py Trail_le_matin.fit --gps --gps-limit 50
+python extractor.py Trail_le_matin.fit --gps --gps-limit 50
 
 # Champs complémentaires et synthèses, sans export ni cache Python
-python3 -B extractor.py Trail_le_matin.fit --stdout --details
+python -B extractor.py Trail_le_matin.fit --stdout --details
 
 # Chemin de sortie personnalisé : le .md va à l'emplacement demandé,
 # et le .fit est déplacé à côté avec le même basename
-python3 extractor.py Trail_le_matin.fit --output activites/trail.md --force
+python extractor.py Trail_le_matin.fit --output activites/trail.md --force
 ```
 
 ## Aperçu de la sortie
