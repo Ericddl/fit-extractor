@@ -478,7 +478,7 @@ Cette évolution ne couvre pas :
 - la génération d'un index global des activités ;
 - la création de frontmatter YAML Obsidian ;
 - l'export CSV, JSON ou HTML ;
-- l'envoi automatique vers ChatGPT ou Claude ;
+- l'envoi automatique vers un service d’IA ;
 - la synchronisation avec Strava, Suunto ou Garmin ;
 - la suppression automatique des fichiers présents dans `export/`.
 

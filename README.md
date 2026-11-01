@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-CLI Python qui convertit un fichier `.fit` (montre Suunto, compteur Garmin) en **Markdown dense**, prêt à coller dans ChatGPT ou Claude pour de l'analyse et du coaching sportif — plus un **fichier GPX 1.1** de la trace complète.
+CLI Python qui convertit un fichier `.fit` (montre Suunto, compteur Garmin) en **Markdown dense**, prêt à coller dans ChatGPT pour de l'analyse et du coaching sportif — plus un **fichier GPX 1.1** de la trace complète.
 
 Les séries brutes sont remplacées par des résumés et des tableaux : allures adaptées
 au sport, kilomètres, montées en trail, terrain et qualité de l’enregistrement.
@@ -67,7 +67,7 @@ python extractor.py Trail_le_matin.fit
 → Archive FIT : export/2026-05-14_running_trail_001.fit
 ```
 
-Il ne reste qu'à coller le contenu du `.md` dans ChatGPT ou Claude.
+Il ne reste qu'à coller le contenu du `.md` dans ChatGPT.
 
 ## Workflow
 
@@ -421,4 +421,4 @@ Attention en revanche à ce que vous collez ensuite dans une IA : un fichier GPX
 
 [MIT](LICENSE).
 
-Projet indépendant, sans aucun lien avec Suunto, Garmin, OpenAI ou Anthropic. « FIT » est un format défini par Garmin ; les marques citées appartiennent à leurs détenteurs respectifs.
+Projet indépendant, sans aucun lien avec Suunto, Garmin ou OpenAI. « FIT » est un format défini par Garmin ; les marques citées appartiennent à leurs détenteurs respectifs.

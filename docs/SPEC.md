@@ -20,7 +20,7 @@
 ## 1. Overview
 
 **Project name** : `fit-extractor`
-**Objective** : Extraire les données d'un fichier `.fit` (montre ou GPS vélo) et les convertir en Markdown structuré, **optimisé pour être envoyé à une IA (ChatGPT, Claude) pour du coaching sportif assisté**.
+**Objective** : Extraire les données d'un fichier `.fit` (montre ou GPS vélo) et les convertir en Markdown structuré, **optimisé pour être envoyé à une IA (par exemple ChatGPT) pour du coaching sportif assisté**.
 **Main stack** : Python 3.10+, `fitparse`, stdlib uniquement
 **Last update** : 2026-10-03
 
@@ -30,7 +30,7 @@
   - un fichier `.md` lisible par un humain et dense en informations pour une IA de coaching ;
   - un fichier `.gpx` 1.1 contenant la trace GPS complète (généré automatiquement si points GPS exploitables) ;
   - le registre global `export/historique_activites.md`, mis à jour après export réussi, hors `--stdout`.
-- **Core use case principal** : copier-coller le `.md` dans ChatGPT ou Claude pour obtenir une analyse de séance, des conseils d'entraînement, un suivi de charge
+- **Core use case principal** : copier-coller le `.md` dans ChatGPT pour obtenir une analyse de séance, des conseils d'entraînement, un suivi de charge
 - **Core use cases secondaires** :
   - Extraction CLI simple : `python extractor.py mon_activite.fit`
   - Archivage personnel d'activités (vault Obsidian)
@@ -668,7 +668,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 | Sections individuelles conditionnelles | Suunto ≠ Garmin — forcer toutes les sections = sections vides | Template individuel fixe |
 | Labels en français | Cible utilisateur francophone, meilleure lisibilité dans ChatGPT | Anglais |
 | `--stdout` disponible | Permet copier-coller direct sans fichier intermédiaire | Toujours fichier |
-| Markdown pur (tableaux GFM) | Rendu parfait dans ChatGPT, Claude, Obsidian | JSON (moins lisible par humain) |
+| Markdown pur (tableaux GFM) | Rendu parfait dans ChatGPT et Obsidian | JSON (moins lisible par humain) |
 | `StandardUnitsDataProcessor` activé | Unités cohérentes, lisibles par une IA | Unités brutes (source d'erreurs) |
 | Dossiers standards `import/` et `export/` | Sépare entrants/sortants, facilite l'archivage | Demander un chemin complet à chaque appel |
 | Basename normalisé `YYYY-MM-DD_<activité>_<indice>` partagé `.md`/`.fit` | Lisible, triable, associe immédiatement source et résultat | Conserver le nom source ou un timestamp brut |
@@ -741,7 +741,7 @@ Le `.gitignore` versionne la structure via `.gitkeep` mais ignore le contenu :
 - Pas de découpage du GPX en plusieurs segments en cas de pause ou perte GPS
 - Pas de correction ni d'interpolation des points GPS manquants
 - Pas d'import du GPX dans Strava/Garmin/Suunto/autre plateforme
-- Pas d'envoi automatique à une IA (pas d'appel API ChatGPT/Claude depuis le script)
+- Pas d'envoi automatique à une IA (pas d'appel à une API d’IA depuis le script)
 - Batch multi-fichiers disponible via `--batch` ; chaque FIT reste une seule activité, sans prise en charge multisession
 - Reprise des archives existantes et réparation du registre uniquement sur demande avec `--sync-history`, après sauvegarde si le registre est cassé
 - Pas de suppression automatique des fichiers présents dans `export/`
